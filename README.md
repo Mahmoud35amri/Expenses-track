@@ -4,9 +4,9 @@ A modern, installable web app (PWA) for iPhone that tracks your **daily** and **
 
 | Tier | Meaning | Default categories |
 |---|---|---|
-| 🟢 Essential | Needs | Groceries, Bills, Rent, Transport, Fuel, Health |
-| 🟣 Lifestyle | Wants | Eating out, Coffee, Shopping, Entertainment, Subscriptions, Other |
-| 🟠 Luxury | Splurges | Travel, Gadgets, Gifts |
+| Essential | Needs | Groceries, Housing, Bills, Transport, Fuel, Health |
+| Lifestyle | Wants | Dining, Coffee, Shopping, Entertainment, Subscriptions, Other |
+| Luxury | Extras | Travel, Electronics, Gifts |
 
 You can add, delete, or move categories between tiers in **Settings**, and set monthly budgets for the whole month or for each tier.
 
