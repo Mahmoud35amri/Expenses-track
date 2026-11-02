@@ -11,13 +11,21 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
+      - name: Check Cloudflare secrets
+        if: env.CF_TOKEN == ''
+        run: echo "::notice::Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repo secrets to enable this deploy. Skipping."
       - uses: actions/checkout@v4
+        if: env.CF_TOKEN != ''
       - name: Prepare static site
+        if: env.CF_TOKEN != ''
         run: |
           mkdir -p dist
-          cp -r index.html styles.css app.js sw.js manifest.webmanifest _headers icons dist/
+          cp -r index.html styles.css app.js icons.js sw.js manifest.webmanifest _headers icons dist/
       - name: Deploy
+        if: env.CF_TOKEN != ''
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
