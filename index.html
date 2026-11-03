@@ -14,13 +14,16 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
   <div id="app">
     <header class="topbar">
-      <h1 id="viewTitle">Today</h1>
-      <span id="viewSub" class="sub"></span>
+      <div class="title-block">
+        <span id="viewSub" class="sub"></span>
+        <h1 id="viewTitle">Today</h1>
+      </div>
+      <button id="syncBadge" class="sync-badge" aria-label="Sync status"></button>
     </header>
     <main id="view"></main>
   </div>
@@ -69,7 +72,7 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="icons.js?v=3"></script>
-  <script src="app.js?v=3"></script>
+  <script src="icons.js?v=4"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

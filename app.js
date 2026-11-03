@@ -38,24 +38,62 @@
   const draft = { id: null, amount: '0', catId: null };
   const newCat = { name: '', icon: 'tag', tier: 'lifestyle' };
 
-  function load() {
-    let s = null;
-    try { s = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (_) { /* ignore */ }
-    s = s || {};
-    const categories = (Array.isArray(s.categories) && s.categories.length ? s.categories : DEFAULT_CATEGORIES.map((c) => ({ ...c })))
+  // Normalizes stored or imported data. Every record carries `updatedAt` (ms) for sync conflict resolution.
+  function normalize(s) {
+    const categories = (Array.isArray(s.categories) && s.categories.length ? s.categories : DEFAULT_CATEGORIES.map((c) => ({ ...c, updatedAt: 0 })))
+      .filter((c) => c && c.id)
       .map((c) => {
-        const out = { id: c.id, name: c.name, tier: TIERS[c.tier] ? c.tier : 'lifestyle', icon: c.icon || LEGACY_ICON[c.id] || 'tag' };
+        const out = { id: String(c.id), name: String(c.name || 'Category'), tier: TIERS[c.tier] ? c.tier : 'lifestyle', icon: c.icon || LEGACY_ICON[c.id] || 'tag', updatedAt: Number(c.updatedAt) || 0 };
         if (!window.ICONS[out.icon]) out.icon = 'tag';
         return out;
       });
     const settings = Object.assign({ currency: 'TND', monthlyBudget: 0, lastCat: null }, s.settings || {});
     if (!settings.currency || settings.currency === '$') settings.currency = 'TND';
     settings.tierBudgets = Object.assign({ essential: 0, lifestyle: 0, luxury: 0 }, settings.tierBudgets || {});
-    return { expenses: Array.isArray(s.expenses) ? s.expenses : [], categories, settings };
+    settings.updatedAt = Number(settings.updatedAt) || 0;
+    const expenses = (Array.isArray(s.expenses) ? s.expenses : []).filter((e) => e && e.id).map((e) => ({
+      id: String(e.id), amount: Number(e.amount) || 0, catId: e.catId, ts: e.ts, note: e.note || '',
+      updatedAt: Number(e.updatedAt) || Date.parse(e.ts) || 1,
+    }));
+    return { expenses, categories, settings };
   }
-  function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); return true; }
+  function load() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (_) { /* ignore */ }
+    s = s || {};
+    const st = normalize(s);
+    if (s.sync && s.sync.key) {
+      st.sync = Object.assign({ cursor: 0, dirty: {}, tomb: {}, lastSyncAt: null }, s.sync);
+    } else {
+      // First run with sync: queue everything already on this device for upload.
+      const now = Date.now();
+      st.sync = { key: genKey(), cursor: 0, dirty: {}, tomb: {}, lastSyncAt: null };
+      st.expenses.forEach((e) => { st.sync.dirty['expense:' + e.id] = 1; });
+      st.categories.forEach((c) => {
+        const d = DEFAULT_CATEGORIES.find((x) => x.id === c.id);
+        if (!d || d.name !== c.name || d.tier !== c.tier || d.icon !== c.icon) { c.updatedAt = now; st.sync.dirty['category:' + c.id] = 1; }
+      });
+      if (Array.isArray(s.categories) && s.categories.length) {
+        DEFAULT_CATEGORIES.forEach((d) => {
+          if (!st.categories.some((c) => c.id === d.id)) { st.sync.tomb['category:' + d.id] = now; st.sync.dirty['category:' + d.id] = 1; }
+        });
+      }
+      const set = st.settings;
+      if (set.monthlyBudget || Object.values(set.tierBudgets).some(Number) || set.currency !== 'TND') { set.updatedAt = now; st.sync.dirty['settings:main'] = 1; }
+    }
+    return st;
+  }
+  function genKey() {
+    const b = new Uint8Array(24);
+    crypto.getRandomValues(b);
+    return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function save(noSync) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
     catch (e) { toast('Could not save. Storage may be full.', 'alert'); return false; }
+    if (!noSync) scheduleSync(800);
+    updateSyncUI();
+    return true;
   }
 
   // ---------- Helpers ----------
@@ -127,6 +165,7 @@
     if (tab === 'month') { setTitle('Overview', ''); view.innerHTML = renderMonth(); }
     if (tab === 'settings') { setTitle('Settings', ''); view.innerHTML = renderSettings(); }
     $('#fab').style.display = tab === 'settings' ? 'none' : '';
+    updateSyncUI();
   }
   function setTitle(t, s) { $('#viewTitle').textContent = t; $('#viewSub').textContent = s; }
 
@@ -335,6 +374,13 @@
       </div>
       <p class="help">Back Tap opens links in Safari. Use Spendly in Safari so all your expenses stay together. When adding it to the Home Screen, turn off <b>Open as Web App</b> so the icon opens in Safari too.</p>
 
+      <div class="section-label">Cloud sync</div>
+      <div class="group">
+        <div class="row" id="syncRow"><span class="sync-ico"></span><span class="grow"></span><button class="btn" id="syncNowBtn">${icon('refresh')}Sync</button></div>
+        <button class="row link" id="linkBtn">${icon('link')}<span class="grow">Copy link for another device</span></button>
+      </div>
+      <p class="help">Everything is saved on this phone first, so the app works without internet. When you are online, changes upload to your private cloud database automatically. Anyone with the device link can see your expenses, so only open it on your own devices.</p>
+
       <div class="section-label">Budgets</div>
       <div class="group">
         <label class="row"><span class="grow">Monthly budget</span><input id="setBudget" type="number" inputmode="decimal" min="0" step="any" value="${s.monthlyBudget || ''}" placeholder="Not set" /></label>
@@ -365,7 +411,7 @@
         <label class="row link" style="cursor:pointer">${icon('upload')}<span class="grow">Restore from backup</span><input id="importJson" type="file" accept="application/json,.json" hidden /></label>
         <button class="row link danger" id="wipe">${icon('trash')}<span class="grow">Erase all expenses</span></button>
       </div>
-      <p class="help">Your data is stored only on this device. Back it up from time to time.</p>
+      <p class="help">Backups are plain files you keep. They do not include your sync link.</p>
       <p class="foot">Spendly · ${state.expenses.length} expense${state.expenses.length === 1 ? '' : 's'} stored</p>`;
   }
 
@@ -445,9 +491,11 @@
     const editing = !!draft.id;
     if (editing) {
       const e = state.expenses.find((x) => x.id === draft.id);
-      if (e) Object.assign(e, { amount, catId: draft.catId, ts, note });
+      if (e) { Object.assign(e, { amount, catId: draft.catId, ts, note }); touch('expense', e); }
     } else {
-      state.expenses.push({ id: uid(), amount, catId: draft.catId, ts, note });
+      const rec = { id: uid(), amount, catId: draft.catId, ts, note };
+      state.expenses.push(rec);
+      touch('expense', rec);
     }
     state.settings.lastCat = draft.catId;
     if (!save()) return;
@@ -456,6 +504,7 @@
   }
   function deleteDraft() {
     if (!draft.id || !confirm('Delete this expense?')) return;
+    tombstone('expense', draft.id);
     state.expenses = state.expenses.filter((e) => e.id !== draft.id);
     save(); closeSheet(); render(); toast('Expense deleted', 'trash');
   }
@@ -463,13 +512,16 @@
   // ---------- URL routing (Back Tap / Shortcuts entry point) ----------
   function handleRoute() {
     const hash = location.hash || '';
+    if (hash.startsWith('#link=')) return linkDevice(decodeURIComponent(hash.slice(6)));
     if (!hash.startsWith('#add')) return;
     const params = new URLSearchParams(hash.split('?')[1] || location.search);
     const amount = parseFloat(params.get('amount'));
     const catParam = (params.get('cat') || '').toLowerCase().trim();
     const cat = catParam ? state.categories.find((c) => c.id === catParam || c.name.toLowerCase() === catParam) : null;
     if (amount > 0 && cat) {
-      state.expenses.push({ id: uid(), amount: round(amount), catId: cat.id, ts: new Date().toISOString(), note: (params.get('note') || '').slice(0, 80) });
+      const rec = { id: uid(), amount: round(amount), catId: cat.id, ts: new Date().toISOString(), note: (params.get('note') || '').slice(0, 80) };
+      state.expenses.push(rec);
+      touch('expense', rec);
       state.settings.lastCat = cat.id;
       save(); history.replaceState(null, '', location.pathname); tab = 'today'; render();
       toast(`Saved ${money(amount)} · ${cat.name}`);
@@ -478,6 +530,175 @@
     if (tab === 'settings') { tab = 'today'; render(); }
     openSheet(null, { amount: amount > 0 ? amount : null, catId: cat && cat.id });
   }
+
+  // ---------- Cloud sync (offline-first) ----------
+  // Every change is written to this device first and queued in state.sync.dirty. When online, the queue is
+  // pushed to the server and newer changes from other devices are pulled. Conflicts: last write wins (updatedAt).
+  const SYNC_API = window.SPENDLY_API || (location.hostname.endsWith('github.io') ? 'https://spendly-m35a.pages.dev/api' : '/api');
+  const KEY_RE = /^[A-Za-z0-9_-]{32,128}$/;
+  const sync = { running: false, again: false, timer: null, status: navigator.onLine ? 'idle' : 'offline' };
+
+  function touch(kind, rec) {
+    rec.updatedAt = Date.now();
+    state.sync.dirty[kind + ':' + (kind === 'settings' ? 'main' : rec.id)] = 1;
+  }
+  function tombstone(kind, id) {
+    state.sync.tomb[kind + ':' + id] = Date.now();
+    state.sync.dirty[kind + ':' + id] = 1;
+  }
+  const pendingCount = () => Object.keys(state.sync.dirty).length;
+  function splitKey(key) { const i = key.indexOf(':'); return [key.slice(0, i), key.slice(i + 1)]; }
+
+  function localVersion(kind, id) {
+    const tomb = state.sync.tomb[kind + ':' + id];
+    if (tomb) return tomb;
+    if (kind === 'expense') { const e = state.expenses.find((x) => x.id === id); return e ? e.updatedAt || 0 : -1; }
+    if (kind === 'category') { const c = state.categories.find((x) => x.id === id); return c ? c.updatedAt || 0 : -1; }
+    if (kind === 'settings') return state.settings.updatedAt || 0;
+    return -1;
+  }
+  function outgoing(key) {
+    const [kind, id] = splitKey(key);
+    if (state.sync.tomb[key]) return { kind, id, updatedAt: state.sync.tomb[key], deleted: true, data: null };
+    if (kind === 'expense') {
+      const e = state.expenses.find((x) => x.id === id);
+      return e && { kind, id, updatedAt: e.updatedAt, deleted: false, data: { amount: e.amount, catId: e.catId, ts: e.ts, note: e.note || '' } };
+    }
+    if (kind === 'category') {
+      const c = state.categories.find((x) => x.id === id);
+      return c && { kind, id, updatedAt: c.updatedAt, deleted: false, data: { name: c.name, icon: c.icon, tier: c.tier } };
+    }
+    if (kind === 'settings') {
+      const st = state.settings;
+      return { kind, id: 'main', updatedAt: st.updatedAt || 0, deleted: false, data: { currency: st.currency, monthlyBudget: st.monthlyBudget, tierBudgets: st.tierBudgets } };
+    }
+    return null;
+  }
+  function applyRemote(r) {
+    if (localVersion(r.kind, r.id) >= r.updatedAt) return false; // local copy is the same or newer
+    const key = r.kind + ':' + r.id;
+    delete state.sync.dirty[key];
+    delete state.sync.tomb[key];
+    const d = r.data || {};
+    if (r.kind === 'expense') {
+      const i = state.expenses.findIndex((x) => x.id === r.id);
+      if (r.deleted) { if (i >= 0) state.expenses.splice(i, 1); return true; }
+      const rec = { id: r.id, amount: Number(d.amount) || 0, catId: String(d.catId || ''), ts: d.ts || new Date().toISOString(), note: String(d.note || ''), updatedAt: r.updatedAt };
+      if (i >= 0) state.expenses[i] = rec; else state.expenses.push(rec);
+    } else if (r.kind === 'category') {
+      const i = state.categories.findIndex((x) => x.id === r.id);
+      if (r.deleted) { if (i >= 0 && state.categories.length > 1) state.categories.splice(i, 1); return true; }
+      const rec = { id: r.id, name: String(d.name || 'Category'), icon: window.ICONS[d.icon] ? d.icon : 'tag', tier: TIERS[d.tier] ? d.tier : 'lifestyle', updatedAt: r.updatedAt };
+      if (i >= 0) state.categories[i] = rec; else state.categories.push(rec);
+    } else if (r.kind === 'settings' && !r.deleted) {
+      Object.assign(state.settings, {
+        currency: String(d.currency || 'TND'), monthlyBudget: Number(d.monthlyBudget) || 0,
+        tierBudgets: Object.assign({ essential: 0, lifestyle: 0, luxury: 0 }, d.tierBudgets || {}), updatedAt: r.updatedAt,
+      });
+    }
+    return true;
+  }
+
+  function scheduleSync(ms) { clearTimeout(sync.timer); sync.timer = setTimeout(() => syncNow(false), ms); }
+  async function syncNow(manual) {
+    if (sync.running) { sync.again = true; return; }
+    if (!navigator.onLine) { setSyncStatus('offline'); if (manual) toast('Offline. Changes are saved on this phone.', 'cloudOff'); return; }
+    sync.running = true;
+    setSyncStatus('syncing');
+    let changed = false;
+    try {
+      for (let pass = 0; pass < 50; pass++) {
+        const keys = Object.keys(state.sync.dirty).slice(0, 200);
+        const changes = [];
+        keys.forEach((k) => { const r = outgoing(k); if (r) changes.push(r); else delete state.sync.dirty[k]; });
+        const res = await fetch(SYNC_API + '/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + state.sync.key },
+          body: JSON.stringify({ since: state.sync.cursor, changes }),
+          cache: 'no-store',
+        });
+        if ([404, 405, 501].includes(res.status)) { const e = new Error('Sync server not set up'); e.code = 'nosetup'; throw e; }
+        if (!res.ok) throw new Error('Server error ' + res.status);
+        const body = await res.json();
+        // Clear queued items the server now has, unless they were edited again while the request was in flight.
+        changes.forEach((r) => {
+          if (localVersion(r.kind, r.id) === r.updatedAt) { delete state.sync.dirty[r.kind + ':' + r.id]; delete state.sync.tomb[r.kind + ':' + r.id]; }
+        });
+        (body.records || []).forEach((r) => { if (applyRemote(r)) changed = true; });
+        state.sync.cursor = Number(body.cursor) || 0;
+        state.sync.lastSyncAt = Date.now();
+        save(true);
+        if (!body.more && !pendingCount()) break;
+      }
+      setSyncStatus('ok');
+      if (manual) toast('Up to date', 'cloudCheck');
+    } catch (e) {
+      setSyncStatus(e.code === 'nosetup' ? 'nosetup' : navigator.onLine ? 'error' : 'offline');
+      if (manual) toast(e.code === 'nosetup' ? 'Sync server is not set up yet' : 'Could not reach the sync server', 'cloudOff');
+    } finally {
+      sync.running = false;
+      if (changed && !$('#sheet').classList.contains('open') && tab !== 'settings') render();
+      else updateSyncUI();
+      if (sync.again) { sync.again = false; scheduleSync(300); }
+    }
+  }
+  function setSyncStatus(s) { sync.status = s; updateSyncUI(); }
+  function ago(t) {
+    const m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    const h = Math.round(m / 60);
+    if (h < 24) return h + ' h ago';
+    return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  function syncInfo() {
+    const n = pendingCount();
+    const waiting = n ? `${n} change${n === 1 ? '' : 's'} waiting to upload` : '';
+    switch (sync.status) {
+      case 'syncing': return { icon: 'refresh', cls: 'spin', text: 'Syncing…' };
+      case 'offline': return { icon: 'cloudOff', cls: 'warn', text: 'Offline · ' + (waiting || 'everything is saved on this phone') };
+      case 'nosetup': return { icon: 'cloudOff', cls: 'warn', text: 'Sync server not set up yet' + (n ? ' · ' + waiting : '') };
+      case 'error': return { icon: 'cloudOff', cls: 'warn', text: 'Could not reach the sync server' + (n ? ' · ' + waiting : '') };
+      default:
+        if (n) return { icon: 'cloudUp', cls: '', text: waiting };
+        return { icon: 'cloudCheck', cls: 'ok', text: state.sync.lastSyncAt ? 'Up to date · synced ' + ago(state.sync.lastSyncAt) : 'Not synced yet' };
+    }
+  }
+  function updateSyncUI() {
+    const info = syncInfo();
+    const n = pendingCount();
+    const badge = $('#syncBadge');
+    if (badge) {
+      badge.className = 'sync-badge ' + info.cls;
+      badge.innerHTML = icon(info.icon) + (n && sync.status !== 'syncing' ? `<span class="num">${n}</span>` : '');
+      badge.setAttribute('aria-label', info.text);
+      badge.title = info.text;
+    }
+    const row = $('#syncRow');
+    if (row) {
+      row.querySelector('.sync-ico').className = 'sync-ico ' + info.cls;
+      row.querySelector('.sync-ico').innerHTML = icon(info.icon);
+      row.querySelector('.grow').textContent = info.text;
+    }
+  }
+  function linkDevice(key) {
+    history.replaceState(null, '', location.pathname);
+    if (!KEY_RE.test(key)) return toast('That device link is not valid', 'alert');
+    if (key === state.sync.key) return toast('This device is already linked', 'cloudCheck');
+    if (!confirm('Link this device to your synced expenses? Expenses already on this device will be added to them.')) return;
+    state.sync.key = key;
+    state.sync.cursor = 0;
+    state.sync.lastSyncAt = null;
+    // Re-upload anything created on this device so it merges into the shared data.
+    state.expenses.forEach((e) => { state.sync.dirty['expense:' + e.id] = 1; });
+    state.categories.forEach((c) => { if (c.updatedAt) state.sync.dirty['category:' + c.id] = 1; });
+    if (state.settings.updatedAt) state.sync.dirty['settings:main'] = 1;
+    save(true);
+    tab = 'today'; render();
+    toast('Device linked', 'link');
+    syncNow(false);
+  }
+  function deviceLink() { return location.origin + location.pathname.replace(/index\.html$/, '') + '#link=' + encodeURIComponent(state.sync.key); }
 
   // ---------- Data ----------
   function download(name, text, type) {
@@ -523,20 +744,30 @@
       if (state.categories.length <= 1) return toast('Keep at least one category', 'alert');
       const used = state.expenses.filter((e) => e.catId === id).length;
       if (!confirm(used ? `${used} expense${used === 1 ? '' : 's'} use this category and will show as Uncategorized. Delete it?` : 'Delete this category?')) return;
+      tombstone('category', id);
       state.categories = state.categories.filter((c) => c.id !== id); save(); render(); return;
     }
     if (t.id === 'addCat') {
       const name = $('#newName').value.trim();
       if (!name) { $('#newName').focus(); return toast('Enter a category name', 'alert'); }
       if (state.categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) return toast('That category already exists', 'alert');
-      state.categories.push({ id: 'c' + uid(), icon: newCat.icon, name, tier: newCat.tier });
+      const rec = { id: 'c' + uid(), icon: newCat.icon, name, tier: newCat.tier };
+      state.categories.push(rec);
+      touch('category', rec);
       newCat.name = ''; newCat.icon = 'tag';
       save(); render(); toast(`Added ${name}`); return;
     }
+    if (t.id === 'syncBadge') { tab = 'settings'; render(); window.scrollTo(0, 0); return; }
+    if (t.id === 'syncNowBtn') return syncNow(true);
+    if (t.id === 'linkBtn') {
+      const url = deviceLink();
+      (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Device link copied', 'link'), () => prompt('Open this link on your other device:', url));
+      return;
+    }
     if (t.id === 'exportCsv') return exportCsv();
-    if (t.id === 'exportJson') return download(`spendly-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(state, null, 2), 'application/json');
+    if (t.id === 'exportJson') return download(`spendly-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({ expenses: state.expenses, categories: state.categories, settings: state.settings }, null, 2), 'application/json');
     if (t.id === 'wipe') {
-      if (confirm('Erase all expenses? This cannot be undone.') && confirm('Are you sure? Consider backing up first.')) { state.expenses = []; save(); render(); toast('All expenses erased', 'trash'); }
+      if (confirm('Erase all expenses? This cannot be undone.') && confirm('Are you sure? Consider backing up first.')) { state.expenses.forEach((e) => tombstone('expense', e.id)); state.expenses = []; save(); render(); toast('All expenses erased', 'trash'); }
     }
   });
 
@@ -545,10 +776,10 @@
   document.addEventListener('change', (ev) => {
     const t = ev.target;
     if (t.id === 'dateInput') updateDateLabel(false);
-    if (t.id === 'setCurrency') { state.settings.currency = t.value.trim().toUpperCase() || 'TND'; save(); toast('Currency updated'); }
-    if (t.id === 'setBudget') { state.settings.monthlyBudget = Math.max(0, parseFloat(t.value) || 0); save(); toast('Budget updated'); }
-    if (t.dataset.tierBudget) { state.settings.tierBudgets[t.dataset.tierBudget] = Math.max(0, parseFloat(t.value) || 0); save(); toast('Budget updated'); }
-    if (t.dataset.catTier) { const c = state.categories.find((x) => x.id === t.dataset.catTier); if (c) { c.tier = t.value; save(); render(); toast(`${c.name} moved to ${TIERS[c.tier].name}`); } }
+    if (t.id === 'setCurrency') { state.settings.currency = t.value.trim().toUpperCase() || 'TND'; touch('settings', state.settings); save(); toast('Currency updated'); }
+    if (t.id === 'setBudget') { state.settings.monthlyBudget = Math.max(0, parseFloat(t.value) || 0); touch('settings', state.settings); save(); toast('Budget updated'); }
+    if (t.dataset.tierBudget) { state.settings.tierBudgets[t.dataset.tierBudget] = Math.max(0, parseFloat(t.value) || 0); touch('settings', state.settings); save(); toast('Budget updated'); }
+    if (t.dataset.catTier) { const c = state.categories.find((x) => x.id === t.dataset.catTier); if (c) { c.tier = t.value; touch('category', c); save(); render(); toast(`${c.name} moved to ${TIERS[c.tier].name}`); } }
     if (t.id === 'importJson' && t.files[0]) {
       const r = new FileReader();
       r.onload = () => {
@@ -556,9 +787,15 @@
           const d = JSON.parse(r.result);
           if (!Array.isArray(d.expenses)) throw new Error('bad file');
           if (!confirm(`Replace current data with ${d.expenses.length} expenses from this backup?`)) return;
-          localStorage.setItem(STORE_KEY, JSON.stringify(d));
-          const fresh = load();
-          state.expenses = fresh.expenses; state.categories = fresh.categories; state.settings = fresh.settings;
+          const fresh = normalize(d);
+          // Anything not in the backup is deleted everywhere; everything in it becomes the newest version.
+          state.expenses.forEach((e) => { if (!fresh.expenses.some((x) => x.id === e.id)) tombstone('expense', e.id); });
+          state.categories.forEach((c) => { if (!fresh.categories.some((x) => x.id === c.id)) tombstone('category', c.id); });
+          state.expenses = fresh.expenses; state.categories = fresh.categories;
+          state.settings = Object.assign(fresh.settings, { lastCat: state.settings.lastCat });
+          state.expenses.forEach((e) => touch('expense', e));
+          state.categories.forEach((c) => touch('category', c));
+          touch('settings', state.settings);
           save(); render(); toast('Backup restored');
         } catch (_) { toast('That file is not a valid backup', 'alert'); }
       };
@@ -577,14 +814,22 @@
   $('#noteInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ev.target.blur(); });
 
   window.addEventListener('hashchange', handleRoute);
+  window.addEventListener('online', () => syncNow(false));
+  window.addEventListener('offline', () => setSyncStatus('offline'));
+  setInterval(() => { if (!document.hidden) syncNow(false); }, 60000);
   window.addEventListener('pageshow', (e) => { if (e.persisted) handleRoute(); });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('#sheet').classList.contains('open') && tab !== 'settings') render(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (!$('#sheet').classList.contains('open') && tab !== 'settings') render();
+    scheduleSync(300);
+  });
 
   // ---------- Boot ----------
   hydrateIcons();
-  save();
+  save(true);
   render();
   handleRoute();
+  scheduleSync(500);
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }

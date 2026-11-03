@@ -1,4 +1,4 @@
-name: Deploy to Cloudflare Pages
+name: Deploy to Cloudflare (app + sync API + D1)
 
 on:
   push:
@@ -8,26 +8,81 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: cloudflare-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PROJECT: spendly-m35a
+      DB_NAME: spendly-db
     steps:
       - name: Check Cloudflare secrets
-        if: env.CF_TOKEN == ''
-        run: echo "::notice::Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repo secrets to enable this deploy. Skipping."
+        id: secrets
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets to enable this deploy. Skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
-        if: env.CF_TOKEN != ''
-      - name: Prepare static site
-        if: env.CF_TOKEN != ''
+        if: steps.secrets.outputs.ready == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: 22
+
+      - name: Install Wrangler
+        if: steps.secrets.outputs.ready == 'true'
+        run: npm install -g wrangler@4.156.2
+
+      - name: Create D1 database (first run only)
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          find_id() { wrangler d1 list --json | jq -r --arg n "$DB_NAME" '.[] | select(.name == $n) | .uuid' | head -n1; }
+          id="$(find_id)"
+          if [ -z "$id" ]; then
+            wrangler d1 create "$DB_NAME"
+            id="$(find_id)"
+          fi
+          test -n "$id"
+          echo "D1 database: $id"
+          sed -i "s/__D1_DATABASE_ID__/$id/" wrangler.toml
+
+      - name: Apply database schema
+        if: steps.secrets.outputs.ready == 'true'
+        run: wrangler d1 execute "$DB_NAME" --remote --file=schema.sql
+
+      - name: Create Pages project (first run only)
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          # Fails harmlessly when the project already exists; the deploy step below verifies it.
+          wrangler pages project create "$PROJECT" --production-branch=main || echo "Project already exists"
+
+      - name: Build static site
+        if: steps.secrets.outputs.ready == 'true'
         run: |
           mkdir -p dist
           cp -r index.html styles.css app.js icons.js sw.js manifest.webmanifest _headers icons dist/
+
       - name: Deploy
-        if: env.CF_TOKEN != ''
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=spendly --branch=main
+        if: steps.secrets.outputs.ready == 'true'
+        run: wrangler pages deploy --branch=main --commit-dirty=true
+
+      - name: Check live API
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS "https://$PROJECT.pages.dev/api/health" | tee /dev/stderr | jq -e '.db == true' > /dev/null; then
+              echo "Live at https://$PROJECT.pages.dev"; exit 0
+            fi
+            sleep 6
+          done
+          echo "::error::API health check failed at https://$PROJECT.pages.dev/api/health"; exit 1

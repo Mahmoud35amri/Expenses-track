@@ -1,5 +1,5 @@
 // Offline cache: serve instantly from cache, refresh in the background.
-const CACHE = 'spendly-v3';
+const CACHE = 'spendly-v4';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'icons.js', 'icons/icon.svg', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
@@ -10,7 +10,9 @@ self.addEventListener('activate', (e) => {
 });
 self.addEventListener('fetch', (e) => {
   const req = e.request;
-  if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
+  const url = new URL(req.url);
+  // Never cache the sync API; only the app shell.
+  if (req.method !== 'GET' || url.origin !== location.origin || url.pathname.includes('/api/')) return;
   const key = req.mode === 'navigate' ? './' : req;
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {

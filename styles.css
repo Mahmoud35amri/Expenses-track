@@ -62,7 +62,21 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 /* Header */
 .topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 14px 2px 16px; }
 .topbar h1 { margin: 0; font-size: 32px; line-height: 1.1; letter-spacing: -0.025em; font-weight: 700; }
-.topbar .sub { color: var(--text-2); font-size: 15px; padding-bottom: 3px; }
+.topbar .sub { color: var(--text-2); font-size: 15px; }
+.title-block { min-width: 0; }
+.title-block .sub { display: block; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); margin-bottom: 2px; min-height: 18px; }
+.topbar .sync-badge { margin-bottom: 2px; }
+#syncNowBtn { height: 32px; padding: 0 10px; font-size: 13px; }
+.sync-badge { display: inline-flex; align-items: center; gap: 4px; height: 30px; min-width: 30px; padding: 0 8px; border-radius: 15px; background: var(--fill); color: var(--text-2); font-size: 13px; font-weight: 600; justify-content: center; flex: none; }
+.sync-badge svg.i { width: 18px; height: 18px; }
+.sync-badge.ok { color: var(--good); }
+.sync-badge.warn { color: var(--t-luxury); }
+.sync-ico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: var(--fill); color: var(--text-2); flex: none; }
+.sync-ico.ok { color: var(--good); }
+.sync-ico.warn { color: var(--t-luxury); }
+#syncRow .grow { font-size: 14px; line-height: 1.3; }
+.spin svg.i { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Cards */
 .card { background: var(--surface); border-radius: var(--radius); padding: 18px; margin-bottom: 12px; border: 1px solid var(--line); }
