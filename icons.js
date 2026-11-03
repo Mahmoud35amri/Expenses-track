@@ -34,6 +34,7 @@ window.ICONS = {
   health: '<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M12 8v8M8 12h8"/>',
   utensils: '<path d="M7 2.5v19M4 2.5V8a3 3 0 0 0 6 0V2.5M17 21.5v-19c-2.2 0-4 2.7-4 6v5h4"/>',
   coffee: '<path d="M4 8.5h13v5.5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M8 2.5v3M12 2.5v3"/>',
+  hookah: '<path d="M7.5 4h9M12 2v2"/><path d="M9.5 4l1 2.8h3l1-2.8"/><path d="M12 6.8V12M9.8 12h4.4"/><path d="M10.8 12v2.4c-2.3.8-3.6 2.5-3.6 4.1 0 1.4 1.1 2.5 2.5 2.5h4.6c1.4 0 2.5-1.1 2.5-2.5 0-1.6-1.3-3.3-3.6-4.1V12"/><path d="M12 9h2.5c3 0 5.5 2 5.5 5.5v3"/><path d="M20 17.5l.4 3.2" stroke-width="2.6"/>',
   bag: '<path d="M5 7.5h14l-1 12.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1z"/><path d="M9 10.5V6.5a3 3 0 0 1 6 0v4"/>',
   film: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7.5 4v16M16.5 4v16M3 9h4.5M3 15h4.5M16.5 9H21M16.5 15H21"/>',
   repeat: '<path d="m17 2.5 3 3-3 3"/><path d="M4 11.5v-2a4 4 0 0 1 4-4h12"/><path d="m7 21.5-3-3 3-3"/><path d="M20 12.5v2a4 4 0 0 1-4 4H4"/>',
@@ -60,5 +61,5 @@ window.ICONS = {
   baby: '<circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a3.5 3.5 0 0 0 5 0"/>',
   cloud: '<path d="M17.5 19H8a5 5 0 1 1 .9-9.9A6 6 0 0 1 20 11.5a3.8 3.8 0 0 1-2.5 7.5z"/>',
 };
-window.CATEGORY_ICONS = ['cart', 'bolt', 'home', 'bus', 'car', 'fuel', 'health', 'heart', 'utensils', 'coffee', 'bag', 'shirt', 'film', 'music', 'game', 'repeat', 'wifi', 'plane', 'phone', 'gift', 'book', 'school', 'dumbbell', 'paw', 'baby', 'scissors', 'wrench', 'briefcase', 'card', 'wallet', 'cloud', 'box', 'tag'];
+window.CATEGORY_ICONS = ['cart', 'bolt', 'home', 'bus', 'car', 'fuel', 'health', 'heart', 'utensils', 'coffee', 'hookah', 'bag', 'shirt', 'film', 'music', 'game', 'repeat', 'wifi', 'plane', 'phone', 'gift', 'book', 'school', 'dumbbell', 'paw', 'baby', 'scissors', 'wrench', 'briefcase', 'card', 'wallet', 'cloud', 'box', 'tag'];
 window.icon = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${window.ICONS[name] || window.ICONS.tag}</svg>`;
