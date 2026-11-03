@@ -553,7 +553,7 @@
       </section>
       <div class="group">
         <label class="row">${'<span class="ico sm neutral">' + icon('wallet') + '</span>'}<span class="grow">Current balance<small class="sub-line">${bal
-          ? [`Since ${new Date(bal.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`, bal.addedSince ? '+' + money(bal.addedSince, true) + ' added' : '', bal.movedSince ? money(bal.movedSince, true) + ' to savings' : '', money(bal.spentSince, true) + ' spent'].filter(Boolean).join(' · ')
+          ? [`Since ${new Date(bal.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${timeStr(new Date(bal.at))}`, bal.addedSince ? '+' + money(bal.addedSince, true) + ' added' : '', bal.movedSince ? money(bal.movedSince, true) + ' to savings' : '', money(bal.spentSince, true) + ' spent'].filter(Boolean).join(' · ')
           : 'Money in your account and cash today'}</small></span>
           <input id="setBalance" type="number" inputmode="decimal" step="any" value="${bal ? round(bal.now) : ''}" placeholder="Not set" /></label>
         ${bal ? `<button class="row link add-money" data-money="balance">${icon('plus')}<span class="grow">Add money to balance</span></button>` : ''}
