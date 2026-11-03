@@ -13,6 +13,8 @@
   const TIER_KEYS = Object.keys(TIERS);
   // Categories paid once a month: counted in monthly totals, left out of daily spending.
   const DEFAULT_FIXED = new Set(['rent', 'subs', 'bills']);
+  const ENTRY_ACCOUNTS = new Set(['balance', 'savings']);
+  const ENTRY_TYPES = new Set(['add', 'transfer', 'set']); // transfer = moved from balance into savings
   const DEFAULT_CATEGORIES = [
     ['groceries', 'cart', 'Groceries', 'essential'],
     ['rent', 'home', 'Housing', 'essential'],
@@ -59,11 +61,17 @@
     settings.balance = numOrNull(settings.balance);
     settings.balanceAt = Number(settings.balanceAt) || 0;
     settings.savings = numOrNull(settings.savings);
+    settings.savingsAt = Number(settings.savingsAt) || 0;
     const expenses = (Array.isArray(s.expenses) ? s.expenses : []).filter((e) => e && e.id).map((e) => ({
       id: String(e.id), amount: Number(e.amount) || 0, catId: e.catId, ts: e.ts, note: e.note || '',
       updatedAt: Number(e.updatedAt) || Date.parse(e.ts) || 1,
     }));
-    return { expenses, categories, settings };
+    // Money log: additions to balance/savings, moves from balance to savings, and manual corrections.
+    const entries = (Array.isArray(s.entries) ? s.entries : []).filter((x) => x && x.id && ENTRY_ACCOUNTS.has(x.account) && ENTRY_TYPES.has(x.type)).map((x) => ({
+      id: String(x.id), account: x.account, type: x.type, amount: Number(x.amount) || 0, note: String(x.note || ''), ts: x.ts,
+      updatedAt: Number(x.updatedAt) || Date.parse(x.ts) || 1,
+    }));
+    return { expenses, categories, settings, entries };
   }
   function load() {
     let s = null;
@@ -204,7 +212,7 @@
   // Don't redraw underneath the user while the add sheet is open or they are typing in a field.
   function canRerender() {
     const a = document.activeElement;
-    return !$('#sheet').classList.contains('open') && tab !== 'settings' && !(a && a.matches('#view input, #view select'));
+    return !document.querySelector('.sheet.open') && tab !== 'settings' && !(a && a.matches('#view input, #view select'));
   }
   function setTitle(t, s) { $('#viewTitle').textContent = t; $('#viewSub').textContent = s; }
 
@@ -411,13 +419,103 @@
     return k >= ymKey(new Date()) ? Number(state.settings.monthlyBudget) || 0 : 0;
   }
   // Balance entered by the user, minus expenses dated after it was entered.
+  // Entered balance + money added since − money moved to savings since − expenses since.
+  const inWindow = (ts, after) => { const t = new Date(ts).getTime(); return t > after && t <= Date.now(); };
   function balanceInfo() {
     const st = state.settings;
     if (st.balance === null) return null;
-    const now = Date.now();
-    const spentSince = sum(state.expenses.filter((e) => { const t = new Date(e.ts).getTime(); return t > st.balanceAt && t <= now; }));
-    return { entered: st.balance, at: st.balanceAt, spentSince, now: st.balance - spentSince };
+    const spentSince = sum(state.expenses.filter((e) => inWindow(e.ts, st.balanceAt)));
+    const addedSince = sum(state.entries.filter((x) => x.account === 'balance' && x.type === 'add' && inWindow(x.ts, st.balanceAt)));
+    const movedSince = sum(state.entries.filter((x) => x.account === 'savings' && x.type === 'transfer' && inWindow(x.ts, st.balanceAt)));
+    return { entered: st.balance, at: st.balanceAt, spentSince, addedSince, movedSince, now: st.balance + addedSince - movedSince - spentSince };
   }
+  function savingsInfo() {
+    const st = state.settings;
+    if (st.savings === null) return null;
+    const addedSince = sum(state.entries.filter((x) => x.account === 'savings' && x.type !== 'set' && inWindow(x.ts, st.savingsAt)));
+    return { entered: st.savings, at: st.savingsAt, addedSince, now: st.savings + addedSince };
+  }
+  function logEntry(account, type, amount, note, ts) {
+    const rec = { id: uid(), account, type, amount, note: note || '', ts: ts || new Date().toISOString() };
+    state.entries.push(rec);
+    touch('entry', rec);
+    return rec;
+  }
+  let showAllActivity = false;
+  function entryView(x) {
+    const acc = x.account === 'balance' ? 'balance' : 'savings';
+    if (x.type === 'set') return { ic: 'check', cls: '', title: acc === 'balance' ? 'Balance set' : 'Savings set', amt: '= ' + money(x.amount) };
+    if (x.type === 'transfer') return { ic: 'vault', cls: '', title: 'Moved to savings', amt: money(x.amount), sub: 'From balance' };
+    return { ic: acc === 'balance' ? 'wallet' : 'vault', cls: 'ok', title: acc === 'balance' ? 'Added to balance' : 'Added to savings', amt: '+' + money(x.amount) };
+  }
+  function activityLog() {
+    const all = state.entries.slice().sort((a, b) => new Date(b.ts) - new Date(a.ts));
+    if (!all.length) return '';
+    const shown = showAllActivity ? all : all.slice(0, 8);
+    return `<div class="section-label">Activity</div>
+      <div class="group">
+        ${shown.map((x) => {
+          const v = entryView(x);
+          const d = new Date(x.ts);
+          const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' + timeStr(d);
+          return `<button class="row act" data-entry="${esc(x.id)}"><span class="ico sm neutral ${v.cls}">${icon(v.ic)}</span>
+            <span class="grow">${v.title}<small class="sub-line">${[when, v.sub, x.note ? esc(x.note) : ''].filter(Boolean).join(' · ')}</small></span>
+            <span class="amt num ${v.cls}">${v.amt}</span></button>`;
+        }).join('')}
+        ${all.length > 8 ? `<button class="row link" id="toggleActivity"><span class="grow">${showAllActivity ? 'Show less' : `Show all ${all.length}`}</span></button>` : ''}
+      </div>
+      <p class="help">Tap an entry to delete it if it was a mistake.</p>`;
+  }
+
+  const moneyDraft = { account: 'balance', type: 'add', dateTouched: false };
+  function openMoney(account) {
+    moneyDraft.account = account;
+    moneyDraft.dateTouched = false;
+    $('#moneyTitle').textContent = account === 'balance' ? 'Add to balance' : 'Add to savings';
+    $('#moneySource').hidden = account !== 'savings';
+    setMoneySource('add');
+    $('#moneyAmount').value = '';
+    $('#moneyNote').value = '';
+    $('#moneyDate').value = toLocalInput(new Date());
+    $('#moneyDateLabel').textContent = 'Now';
+    $('#moneyCur').textContent = cur();
+    $('#moneySheet').classList.add('open');
+    $('#moneySheet').setAttribute('aria-hidden', 'false');
+    $('#moneyAmount').focus(); // same tick as the tap, so iOS opens the keyboard
+  }
+  function setMoneySource(type) {
+    moneyDraft.type = type;
+    document.querySelectorAll('#moneySource button').forEach((b) => b.classList.toggle('on', b.dataset.src === type));
+    $('#moneyHint').textContent = moneyDraft.account === 'balance'
+      ? 'Salary, a gift, a refund… Your balance goes up by this amount.'
+      : type === 'transfer' ? 'Your balance goes down and your savings go up by this amount.' : 'Money from outside your balance, added straight to savings.';
+    $('#moneyNote').placeholder = moneyDraft.account === 'balance' ? 'Note, e.g. Salary' : 'Note (optional)';
+  }
+  function saveMoney() {
+    const amount = round(parseFloat(String($('#moneyAmount').value).replace(',', '.')));
+    if (!(amount > 0)) { $('#moneyAmount').focus(); return toast('Enter an amount', 'alert'); }
+    const st = state.settings;
+    if (moneyDraft.type === 'transfer' && st.balance === null) return toast('Set your current balance first', 'alert');
+    let ts = new Date().toISOString();
+    if (moneyDraft.dateTouched) { const d = new Date($('#moneyDate').value); if (!isNaN(d)) ts = d.toISOString(); }
+    if (moneyDraft.account === 'savings' && st.savings === null) { st.savings = 0; st.savingsAt = 0; touch('settings', st); }
+    logEntry(moneyDraft.account, moneyDraft.type, amount, $('#moneyNote').value.trim().slice(0, 60), ts);
+    save(); closeSheet(); render();
+    toast(moneyDraft.type === 'transfer' ? `Moved ${money(amount)} to savings` : `Added ${money(amount)} to ${moneyDraft.account}`, 'plus');
+  }
+  function deleteEntry(id) {
+    const x = state.entries.find((y) => y.id === id);
+    if (!x) return;
+    const v = entryView(x);
+    const msg = x.type === 'set'
+      ? `Remove "${v.title}" from the log? Your current ${x.account} stays the same.`
+      : `Delete "${v.title}" (${money(x.amount)})? Your ${x.type === 'transfer' ? 'balance and savings' : x.account} will be recalculated.`;
+    if (!confirm(msg)) return;
+    tombstone('entry', id);
+    state.entries = state.entries.filter((y) => y.id !== id);
+    save(); render(); toast('Entry deleted', 'trash');
+  }
+
   function insight(ic, cls, html) { return `<li class="insight ${cls}"><span class="ii">${icon(ic)}</span><span>${html}</span></li>`; }
 
   function renderBudget() {
@@ -440,7 +538,8 @@
     const projected = isCurrent ? mb.paid + mb.upcoming + pace * days : spent;
     const perDayLeft = daysLeft ? Math.max(0, left - (isPast ? 0 : mb.upcoming)) / daysLeft : 0;
     const bal = balanceInfo();
-    const savings = st.savings;
+    const sav = savingsInfo();
+    const savings = sav ? sav.now : null;
 
     // Overall money
     const overall = `
@@ -454,13 +553,18 @@
       </section>
       <div class="group">
         <label class="row">${'<span class="ico sm neutral">' + icon('wallet') + '</span>'}<span class="grow">Current balance<small class="sub-line">${bal
-          ? `Entered ${new Date(bal.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${money(bal.spentSince)} spent since`
+          ? [`Since ${new Date(bal.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`, bal.addedSince ? '+' + money(bal.addedSince, true) + ' added' : '', bal.movedSince ? money(bal.movedSince, true) + ' to savings' : '', money(bal.spentSince, true) + ' spent'].filter(Boolean).join(' · ')
           : 'Money in your account and cash today'}</small></span>
           <input id="setBalance" type="number" inputmode="decimal" step="any" value="${bal ? round(bal.now) : ''}" placeholder="Not set" /></label>
-        <label class="row">${'<span class="ico sm neutral">' + icon('vault') + '</span>'}<span class="grow">Savings<small class="sub-line">Money you keep aside</small></span>
-          <input id="setSavings" type="number" inputmode="decimal" step="any" value="${savings !== null ? savings : ''}" placeholder="Not set" /></label>
+        ${bal ? `<button class="row link add-money" data-money="balance">${icon('plus')}<span class="grow">Add money to balance</span></button>` : ''}
+        <label class="row">${'<span class="ico sm neutral">' + icon('vault') + '</span>'}<span class="grow">Savings<small class="sub-line">${sav && sav.addedSince
+          ? `Since ${sav.at ? new Date(sav.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'the start'} · +${money(sav.addedSince, true)} added`
+          : 'Money you keep aside'}</small></span>
+          <input id="setSavings" type="number" inputmode="decimal" step="any" value="${savings !== null ? round(savings) : ''}" placeholder="Not set" /></label>
+        <button class="row link add-money" data-money="savings">${icon('plus')}<span class="grow">Add to savings</span></button>
       </div>
-      <p class="help">Your balance goes down automatically as you add expenses. Update it any time to match your bank.</p>`;
+      <p class="help">Your balance goes down automatically as you add expenses and up when you add money. Type a new amount any time to match your bank. Every change is kept in the activity log below.</p>
+      ${activityLog()}`;
 
     // Month allowance + analysis
     let analysis = '';
@@ -487,6 +591,12 @@
       tips.push(insight(diff > 0 ? 'alert' : 'check', diff > 0 ? 'warn' : 'ok',
         `At your pace of <b>${money(pace)}</b> a day, you will spend about <b>${money(projected)}</b> this month, ${diff > 0 ? `<b>${money(diff)} over</b>` : `<b>${money(-diff)} under</b>`} your allowance.`));
       if (left > 0) tips.push(insight('today', '', `To stay on budget, keep day-to-day spending under <b>${money(perDayLeft)}</b> a day for the next ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`));
+    }
+    const monthEntries = state.entries.filter((x) => sameMonth(new Date(x.ts), m));
+    const income = sum(monthEntries.filter((x) => x.account === 'balance' && x.type === 'add'));
+    const saved = sum(monthEntries.filter((x) => x.account === 'savings' && x.type !== 'set'));
+    if (income || saved) {
+      tips.push(insight('plus', 'ok', [income ? `<b>${money(income)}</b> added to your balance` : '', saved ? `<b>${money(saved)}</b> put into savings` : ''].filter(Boolean).join(' and ') + ' this month.'));
     }
     if (mb.paid || mb.upcoming) {
       const names = mb.upcomingCats.map(([id]) => esc(catById(id).name)).join(', ');
@@ -681,8 +791,7 @@
     requestAnimationFrame(() => { const on = $('.cat-chip.on'); if (on) on.scrollIntoView({ inline: 'nearest', block: 'nearest' }); });
   }
   function closeSheet() {
-    $('#sheet').classList.remove('open');
-    $('#sheet').setAttribute('aria-hidden', 'true');
+    document.querySelectorAll('.sheet.open').forEach((el) => { el.classList.remove('open'); el.setAttribute('aria-hidden', 'true'); });
     if (document.activeElement) document.activeElement.blur();
     if (location.hash) history.replaceState(null, '', location.pathname + location.search);
   }
@@ -806,6 +915,7 @@
     if (kind === 'expense') { const e = state.expenses.find((x) => x.id === id); return e ? e.updatedAt || 0 : -1; }
     if (kind === 'category') { const c = state.categories.find((x) => x.id === id); return c ? c.updatedAt || 0 : -1; }
     if (kind === 'settings') return state.settings.updatedAt || 0;
+    if (kind === 'entry') { const x = state.entries.find((y) => y.id === id); return x ? x.updatedAt || 0 : -1; }
     return -1;
   }
   function outgoing(key) {
@@ -819,11 +929,15 @@
       const c = state.categories.find((x) => x.id === id);
       return c && { kind, id, updatedAt: c.updatedAt, deleted: false, data: { name: c.name, icon: c.icon, tier: c.tier, fixed: !!c.fixed } };
     }
+    if (kind === 'entry') {
+      const x = state.entries.find((y) => y.id === id);
+      return x && { kind, id, updatedAt: x.updatedAt, deleted: false, data: { account: x.account, type: x.type, amount: x.amount, note: x.note, ts: x.ts } };
+    }
     if (kind === 'settings') {
       const st = state.settings;
       return { kind, id: 'main', updatedAt: st.updatedAt || 0, deleted: false, data: {
         currency: st.currency, monthlyBudget: st.monthlyBudget, tierBudgets: st.tierBudgets,
-        monthAllowances: st.monthAllowances, balance: st.balance, balanceAt: st.balanceAt, savings: st.savings,
+        monthAllowances: st.monthAllowances, balance: st.balance, balanceAt: st.balanceAt, savings: st.savings, savingsAt: st.savingsAt,
       } };
     }
     return null;
@@ -845,11 +959,17 @@
       const rec = { id: r.id, name: String(d.name || 'Category'), icon: window.ICONS[d.icon] ? d.icon : 'tag', tier: TIERS[d.tier] ? d.tier : 'lifestyle', updatedAt: r.updatedAt,
         fixed: d.fixed === undefined ? DEFAULT_FIXED.has(r.id) : !!d.fixed };
       if (i >= 0) state.categories[i] = rec; else state.categories.push(rec);
+    } else if (r.kind === 'entry') {
+      const i = state.entries.findIndex((x) => x.id === r.id);
+      if (r.deleted) { if (i >= 0) state.entries.splice(i, 1); return true; }
+      if (!ENTRY_ACCOUNTS.has(d.account) || !ENTRY_TYPES.has(d.type)) return false;
+      const rec = { id: r.id, account: d.account, type: d.type, amount: Number(d.amount) || 0, note: String(d.note || ''), ts: d.ts || new Date().toISOString(), updatedAt: r.updatedAt };
+      if (i >= 0) state.entries[i] = rec; else state.entries.push(rec);
     } else if (r.kind === 'settings' && !r.deleted) {
       Object.assign(state.settings, {
         currency: String(d.currency || 'TND'), monthlyBudget: Number(d.monthlyBudget) || 0,
         tierBudgets: Object.assign({ essential: 0, lifestyle: 0, luxury: 0 }, d.tierBudgets || {}), updatedAt: r.updatedAt,
-        monthAllowances: normAllowances(d.monthAllowances), balance: numOrNull(d.balance), balanceAt: Number(d.balanceAt) || 0, savings: numOrNull(d.savings),
+        monthAllowances: normAllowances(d.monthAllowances), balance: numOrNull(d.balance), balanceAt: Number(d.balanceAt) || 0, savings: numOrNull(d.savings), savingsAt: Number(d.savingsAt) || 0,
       });
     }
     return true;
@@ -997,6 +1117,11 @@
     }
     if (t.dataset.newIcon) { newCat.icon = t.dataset.newIcon; document.querySelectorAll('[data-new-icon]').forEach((b) => b.classList.toggle('on', b === t)); return; }
     if (t.dataset.newTier) { newCat.tier = t.dataset.newTier; document.querySelectorAll('[data-new-tier]').forEach((b) => b.classList.toggle('on', b === t)); return; }
+    if (t.dataset.money) return openMoney(t.dataset.money);
+    if (t.dataset.src) return setMoneySource(t.dataset.src);
+    if (t.id === 'moneySave') return saveMoney();
+    if (t.dataset.entry) return deleteEntry(t.dataset.entry);
+    if (t.id === 'toggleActivity') { showAllActivity = !showAllActivity; render(); return; }
     if (t.id === 'newFixed') { newCat.fixed = !newCat.fixed; t.classList.toggle('on', newCat.fixed); return; }
     if (t.dataset.unfix) { setFixed(t.dataset.unfix, false); return; }
     if (t.dataset.catDel) {
@@ -1031,7 +1156,7 @@
       return;
     }
     if (t.id === 'exportCsv') return exportCsv();
-    if (t.id === 'exportJson') return download(`spendly-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({ expenses: state.expenses, categories: state.categories, settings: state.settings }, null, 2), 'application/json');
+    if (t.id === 'exportJson') return download(`spendly-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({ expenses: state.expenses, categories: state.categories, settings: state.settings, entries: state.entries }, null, 2), 'application/json');
     if (t.id === 'wipe') {
       if (confirm('Erase all expenses? This cannot be undone.') && confirm('Are you sure? Consider backing up first.')) { state.expenses.forEach((e) => tombstone('expense', e.id)); state.expenses = []; save(); render(); toast('All expenses erased', 'trash'); }
     }
@@ -1044,12 +1169,17 @@
     if (t.id === 'dateInput') { draft.dateTouched = true; updateDateLabel(false); }
     if (t.id === 'setCurrency') { state.settings.currency = t.value.trim().toUpperCase() || 'TND'; touch('settings', state.settings); save(); toast('Currency updated'); }
     if (t.id === 'addFixed' && t.value) { setFixed(t.value, true); return; }
-    if (t.id === 'setBalance') {
-      state.settings.balance = numOrNull(t.value);
-      state.settings.balanceAt = Date.now();
-      touch('settings', state.settings); save(); render(); toast('Balance updated');
+    if (t.id === 'setBalance' || t.id === 'setSavings') {
+      const account = t.id === 'setBalance' ? 'balance' : 'savings';
+      const v = numOrNull(t.value);
+      const now = Date.now();
+      state.settings[account] = v;
+      state.settings[account + 'At'] = now;
+      touch('settings', state.settings);
+      if (v !== null) logEntry(account, 'set', round(v), '', new Date(now).toISOString());
+      save(); render(); toast(account === 'balance' ? 'Balance updated' : 'Savings updated');
     }
-    if (t.id === 'setSavings') { state.settings.savings = numOrNull(t.value); touch('settings', state.settings); save(); render(); toast('Savings updated'); }
+    if (t.id === 'moneyDate') { moneyDraft.dateTouched = true; const d = new Date(t.value); $('#moneyDateLabel').textContent = isNaN(d) ? 'Now' : (sameDay(d, new Date()) ? 'Today' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) + ', ' + timeStr(d); }
     if (t.id === 'setAllowance') {
       const ym = t.dataset.ym;
       const v = numOrNull(t.value);
@@ -1071,6 +1201,11 @@
           // Anything not in the backup is deleted everywhere; everything in it becomes the newest version.
           state.expenses.forEach((e) => { if (!fresh.expenses.some((x) => x.id === e.id)) tombstone('expense', e.id); });
           state.categories.forEach((c) => { if (!fresh.categories.some((x) => x.id === c.id)) tombstone('category', c.id); });
+          if (Array.isArray(d.entries)) {
+            state.entries.forEach((x) => { if (!fresh.entries.some((y) => y.id === x.id)) tombstone('entry', x.id); });
+            state.entries = fresh.entries;
+            state.entries.forEach((x) => touch('entry', x));
+          }
           state.expenses = fresh.expenses; state.categories = fresh.categories;
           state.settings = Object.assign(fresh.settings, { lastCat: state.settings.lastCat });
           state.expenses.forEach((e) => touch('expense', e));
@@ -1092,6 +1227,7 @@
     else if (ev.key === 'Escape') closeSheet();
   });
   $('#noteInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ev.target.blur(); });
+  ['#moneyAmount', '#moneyNote'].forEach((sel) => $(sel).addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); saveMoney(); } }));
 
   window.addEventListener('hashchange', handleRoute);
   window.addEventListener('online', () => syncNow(false));

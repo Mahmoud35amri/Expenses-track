@@ -310,3 +310,15 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 .bills-note { font-size: 13px; color: var(--text-2); margin: -8px 0 14px; }
 .chart + .chart-x + .bills-note { margin: 10px 0 0; }
 .tier-pick button svg.i { width: 16px; height: 16px; }
+
+/* Money log */
+.money-amount { display: flex; align-items: baseline; justify-content: center; gap: 8px; padding: 8px 0 4px; }
+.money-amount input { flex: 1 1 50%; min-width: 0; border: 0; background: transparent; text-align: right; font-size: 48px; font-weight: 700; letter-spacing: -0.03em; outline: none; font-variant-numeric: tabular-nums; }
+.money-amount input::placeholder { color: var(--text-3); }
+.money-amount span { flex: 1 1 50%; text-align: left; font-size: 22px; font-weight: 600; color: var(--text-3); }
+.row.act { width: 100%; text-align: left; }
+.row.act .amt { font-weight: 600; font-size: 15px; white-space: nowrap; }
+.row.act .amt.ok, .ico.ok { color: var(--good); }
+.row.add-money { font-size: 15px; }
+#moneySheet .seg { margin: 0; }
+#moneySource[hidden] { display: none; }

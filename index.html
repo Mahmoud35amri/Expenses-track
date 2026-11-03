@@ -14,7 +14,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
   <div id="app">
@@ -71,9 +71,32 @@
     </div>
   </div>
 
+  <div id="moneySheet" class="sheet" aria-hidden="true">
+    <div class="sheet-backdrop" data-close></div>
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="moneyTitle">
+      <div class="grabber"></div>
+      <div class="sheet-head">
+        <button class="txt" data-close>Cancel</button>
+        <h2 id="moneyTitle">Add money</h2>
+        <span></span>
+      </div>
+      <div class="seg" id="moneySource" hidden>
+        <button data-src="add" class="on">New money</button>
+        <button data-src="transfer">From balance</button>
+      </div>
+      <label class="money-amount"><input id="moneyAmount" type="text" inputmode="decimal" placeholder="0" autocomplete="off" enterkeyhint="done" /><span id="moneyCur">TND</span></label>
+      <div class="sheet-meta">
+        <input id="moneyNote" type="text" placeholder="Note" maxlength="60" autocomplete="off" />
+        <label class="date-chip"><span data-icon="calendar"></span><span id="moneyDateLabel">Now</span><input id="moneyDate" type="datetime-local" aria-label="Date and time" /></label>
+      </div>
+      <p class="help" id="moneyHint" style="margin:0 4px"></p>
+      <button id="moneySave" class="save-btn">Add</button>
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="icons.js?v=7"></script>
-  <script src="app.js?v=7"></script>
+  <script src="icons.js?v=8"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

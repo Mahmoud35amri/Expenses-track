@@ -5,7 +5,7 @@
 import { json, preflight } from '../../lib/api.js';
 
 const KEY_RE = /^[A-Za-z0-9_-]{32,128}$/;
-const KINDS = new Set(['expense', 'category', 'settings']);
+const KINDS = new Set(['expense', 'category', 'settings', 'entry']);
 const MAX_CHANGES = 500;
 const MAX_DATA = 4000;
 const PAGE = 1000;
