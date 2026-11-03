@@ -220,24 +220,28 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
   position: fixed; left: 0; right: 0; bottom: var(--bar-bottom); z-index: 10;
   width: min(calc(100% - 32px), 420px); margin: 0 auto; padding: 4px; border-radius: 99px;
   display: grid; grid-template-columns: repeat(4, 1fr);
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   background: var(--glass);
   backdrop-filter: blur(14px) saturate(190%) brightness(1.05); -webkit-backdrop-filter: blur(14px) saturate(190%) brightness(1.05);
   /* liquid-glass rim: bright top-left edge, softer bottom-right */
   box-shadow: inset 0 0 0 0.5px var(--glass-rim), inset 1px 1.5px 0 -0.5px var(--glass-rim), inset -1px -1.5px 0 -0.5px var(--glass-rim-2), 0 8px 28px rgba(0, 0, 0, 0.14), 0 1px 3px rgba(0, 0, 0, 0.08);
 }
-/* sliding lens behind the active tab; one :has rule per tab after the first */
+/* sliding lens behind the active tab; one --i rule per tab after the first */
 .tabbar::before {
   content: ''; position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc((100% - 8px) / 4);
   border-radius: 99px; background: var(--glass-lens); box-shadow: inset 0 0 0 0.5px var(--glass-rim-2);
-  transition: transform 0.45s cubic-bezier(0.3, 1.35, 0.5, 1);
+  transform: translateX(calc(var(--i, 0) * 100%)); transition: transform 0.45s cubic-bezier(0.3, 1.35, 0.5, 1);
 }
-.tabbar:has(button:nth-child(2).active)::before { transform: translateX(100%); }
-.tabbar:has(button:nth-child(3).active)::before { transform: translateX(200%); }
-.tabbar:has(button:nth-child(4).active)::before { transform: translateX(300%); }
+.tabbar:has(button:nth-child(2).active) { --i: 1; }
+.tabbar:has(button:nth-child(3).active) { --i: 2; }
+.tabbar:has(button:nth-child(4).active) { --i: 3; }
+/* while dragging, the lens follows the finger (--x set by app.js) and swells like iOS */
+.tabbar.dragging::before { transform: translateX(var(--x)) scale(1.12); transition: transform 0.1s ease-out; }
 .tabbar button { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; font-weight: 600; color: var(--text-2); padding: 7px 0 6px; border-radius: 99px; transition: transform 0.2s ease, color 0.2s; }
 .tabbar button svg.i { width: 24px; height: 24px; }
 .tabbar button.active { color: var(--text); }
 .tabbar button:active { transform: scale(0.9); }
+.tabbar.dragging button { transform: none; }
 @media (prefers-reduced-motion: reduce) { .tabbar::before, .tabbar button { transition: none; } }
 
 /* Sheet */

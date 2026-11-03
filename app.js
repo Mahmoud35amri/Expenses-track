@@ -1226,6 +1226,44 @@
     else if (ev.key === 'Enter') saveDraft();
     else if (ev.key === 'Escape') closeSheet();
   });
+
+  // Drag across the tab bar: the lens follows the finger and the tab under it opens on release.
+  const tabbar = $('.tabbar');
+  const tabBtns = [...tabbar.querySelectorAll('button')];
+  const markTab = (i) => tabBtns.forEach((b, j) => b.classList.toggle('active', j === i));
+  let drag = null;
+  let justDragged = false;
+  tabbar.addEventListener('pointerdown', (ev) => {
+    if (!ev.isPrimary) return;
+    const r = tabbar.getBoundingClientRect();
+    drag = { x0: ev.clientX, left: r.left + 4, cell: (r.width - 8) / tabBtns.length, moved: false, i: tabBtns.findIndex((b) => b.dataset.tab === tab) };
+    justDragged = false;
+  });
+  tabbar.addEventListener('pointermove', (ev) => {
+    if (!drag || (!drag.moved && Math.abs(ev.clientX - drag.x0) < 6)) return;
+    // Capture only once it's a real drag: capturing on press would retarget plain taps' clicks to the bar.
+    if (!drag.moved) tabbar.setPointerCapture(ev.pointerId);
+    drag.moved = true;
+    tabbar.classList.add('dragging');
+    const x = Math.min(Math.max(ev.clientX - drag.left - drag.cell / 2, 0), drag.cell * (tabBtns.length - 1));
+    tabbar.style.setProperty('--x', `${x}px`);
+    const i = Math.round(x / drag.cell);
+    if (i !== drag.i) { drag.i = i; markTab(i); haptic(); }
+  });
+  const endDrag = (ev) => {
+    const d = drag;
+    drag = null;
+    if (!d || !d.moved) return;
+    justDragged = true;
+    tabbar.classList.remove('dragging');
+    const next = tabBtns[d.i].dataset.tab;
+    if (ev.type === 'pointerup' && next !== tab) { tab = next; render(); window.scrollTo(0, 0); }
+    else markTab(tabBtns.findIndex((b) => b.dataset.tab === tab));
+  };
+  tabbar.addEventListener('pointerup', endDrag);
+  tabbar.addEventListener('pointercancel', endDrag);
+  // The browser may still fire a click on the button where the drag started; the drag already chose the tab.
+  tabbar.addEventListener('click', (ev) => { if (justDragged) ev.stopPropagation(); }, true);
   $('#noteInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ev.target.blur(); });
   ['#moneyAmount', '#moneyNote'].forEach((sel) => $(sel).addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); saveMoney(); } }));
 
