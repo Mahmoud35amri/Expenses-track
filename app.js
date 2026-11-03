@@ -155,6 +155,7 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
   }
   function timeStr(d) { return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); }
+  function whenLabel(d) { return (sameDay(d, new Date()) ? 'Today' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) + ', ' + timeStr(d); }
   function dayLabel(d) {
     const today = new Date();
     const y = new Date(); y.setDate(y.getDate() - 1);
@@ -553,9 +554,11 @@
       </section>
       <div class="group">
         <label class="row">${'<span class="ico sm neutral">' + icon('wallet') + '</span>'}<span class="grow">Current balance<small class="sub-line">${bal
-          ? [`Since ${new Date(bal.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${timeStr(new Date(bal.at))}`, bal.addedSince ? '+' + money(bal.addedSince, true) + ' added' : '', bal.movedSince ? money(bal.movedSince, true) + ' to savings' : '', money(bal.spentSince, true) + ' spent'].filter(Boolean).join(' · ')
+          ? [`Since ${new Date(bal.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`, bal.addedSince ? '+' + money(bal.addedSince, true) + ' added' : '', bal.movedSince ? money(bal.movedSince, true) + ' to savings' : '', money(bal.spentSince, true) + ' spent'].filter(Boolean).join(' · ')
           : 'Money in your account and cash today'}</small></span>
           <input id="setBalance" type="number" inputmode="decimal" step="any" value="${bal ? round(bal.now) : ''}" placeholder="Not set" /></label>
+        ${bal ? `<div class="row">${'<span class="ico sm neutral">' + icon('calendar') + '</span>'}<span class="grow">Counting from<small class="sub-line">When you had that amount; spending after it comes off</small></span>
+          <label class="date-chip"><span>${whenLabel(new Date(bal.at))}</span><input id="setBalanceAt" type="datetime-local" value="${toLocalInput(new Date(bal.at))}" aria-label="Balance counting from" /></label></div>` : ''}
         ${bal ? `<button class="row link add-money" data-money="balance">${icon('plus')}<span class="grow">Add money to balance</span></button>` : ''}
         <label class="row">${'<span class="ico sm neutral">' + icon('vault') + '</span>'}<span class="grow">Savings<small class="sub-line">${sav && sav.addedSince
           ? `Since ${sav.at ? new Date(sav.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'the start'} · +${money(sav.addedSince, true)} added`
@@ -1169,6 +1172,12 @@
     if (t.id === 'dateInput') { draft.dateTouched = true; updateDateLabel(false); }
     if (t.id === 'setCurrency') { state.settings.currency = t.value.trim().toUpperCase() || 'TND'; touch('settings', state.settings); save(); toast('Currency updated'); }
     if (t.id === 'addFixed' && t.value) { setFixed(t.value, true); return; }
+    if (t.id === 'setBalanceAt') {
+      // Moves when the entered amount was true; the amount stays, spending/additions after it are recounted.
+      const at = new Date(t.value).getTime();
+      if (!isNaN(at)) { state.settings.balanceAt = Math.min(at, Date.now()); touch('settings', state.settings); save(); toast('Balance recounted'); }
+      render();
+    }
     if (t.id === 'setBalance' || t.id === 'setSavings') {
       const account = t.id === 'setBalance' ? 'balance' : 'savings';
       const v = numOrNull(t.value);
@@ -1179,7 +1188,7 @@
       if (v !== null) logEntry(account, 'set', round(v), '', new Date(now).toISOString());
       save(); render(); toast(account === 'balance' ? 'Balance updated' : 'Savings updated');
     }
-    if (t.id === 'moneyDate') { moneyDraft.dateTouched = true; const d = new Date(t.value); $('#moneyDateLabel').textContent = isNaN(d) ? 'Now' : (sameDay(d, new Date()) ? 'Today' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) + ', ' + timeStr(d); }
+    if (t.id === 'moneyDate') { moneyDraft.dateTouched = true; const d = new Date(t.value); $('#moneyDateLabel').textContent = isNaN(d) ? 'Now' : whenLabel(d); }
     if (t.id === 'setAllowance') {
       const ym = t.dataset.ym;
       const v = numOrNull(t.value);
