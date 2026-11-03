@@ -30,17 +30,19 @@ iOS doesn't allow widgets for web apps, so Spendly's widget runs in the free **S
 
 | Size | Shows |
 |---|---|
-| Small | Today's total, this month's total, and budget left (if you set a monthly budget) |
+| Small | Your balance from the Budget tab, today's spending, what's left of this month's allowance, and savings. Until you set a balance, today's total is the big number. |
 | Medium | The same, plus this month split by tier and an **+ Add** button |
 | Large | The same, plus your latest 5 expenses (4 when a monthly budget is set) |
 | Lock Screen | Today's and this month's totals |
 
 1. Install **Scriptable** from the App Store.
-2. On the iPhone, open https://mahmoud35amri.github.io/Expenses-track/widget/spendly-widget.js, then long-press the text, tap **Select All**, and **Copy**. In Scriptable, tap **+**, paste, and name the script **Spendly**.
+2. On the iPhone, open https://mahmoud35amri.github.io/Expenses-track/widget/spendly-loader.js, then long-press the text, tap **Select All**, and **Copy**. In Scriptable, tap **+**, paste, and name the script **Spendly**.
 3. In Spendly, tap **Settings → Copy link for another device**. In Scriptable, run the **Spendly** script and paste the link. Use **Preview** to see each size.
 4. Long-press the Home Screen, tap **Edit → Add Widget → Scriptable**, choose a size, and add it. Then long-press the widget, tap **Edit Widget**, and set **Script** to **Spendly**.
 
 The widget refreshes about every 15 minutes (iOS picks the exact time). Tapping it opens Spendly in Safari. When the phone is offline, it shows the last data it downloaded and says "offline". To check the widget code: `node widget/widget.test.js`.
+
+The script you paste is a small loader. Each time it runs, it downloads `widget/spendly-widget.js` from the site, so changes to the widget go live about 30 minutes after a push, without touching Scriptable. If you set up the widget before the loader existed, replace the **Spendly** script's contents with the loader once. You don't need to link it again.
 
 ## Budget tab
 

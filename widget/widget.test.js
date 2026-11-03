@@ -41,6 +41,12 @@ function fakeRequest(replies, sent) {
       this.response = { statusCode: r.status || 200 };
       return r.body;
     }
+    async loadString() {
+      const r = replies.shift();
+      if (r instanceof Error) throw r;
+      this.response = { statusCode: r.status || 200 };
+      return r.body;
+    }
   };
 }
 
@@ -106,6 +112,29 @@ const RECORDS = [
   assert.strictEqual(sb.today, s.today, 'bills are not daily spending');
   assert.strictEqual(sb.month, s.month + 860, 'bills count in the month');
 
+  // Budget tab: balance, savings and the month's allowance follow the app's rules
+  const after = new Date(2026, 10, 2).getTime();
+  const entry = (id, account, type, amount, ts, deleted = false) => ({ kind: 'entry', id, deleted, data: { account, type, amount, ts } });
+  const withMoney = [...RECORDS.filter((r) => r.kind !== 'settings'),
+    { kind: 'settings', id: 'main', data: { currency: 'TND', monthlyBudget: 500, monthAllowances: { '2026-10': 600 }, balance: 1000, balanceAt: after, savings: 200, savingsAt: after } },
+    entry('x1', 'balance', 'add', 300, at(2, 12)),
+    entry('x2', 'balance', 'add', 50, at(1, 12)), // before the balance was entered
+    entry('x3', 'savings', 'transfer', 100, at(3, 10)),
+    entry('x4', 'savings', 'set', 999, at(3, 11)),
+    entry('x5', 'savings', 'add', 25, at(4, 12)), // in the future
+    entry('x6', 'balance', 'add', 7, at(3, 12), true)];
+  const sm = w.summarize(withMoney, NOW);
+  assert.strictEqual(sm.balance, 1000 + 300 - 100 - 35.5, 'balance: added, moved to savings, spent since it was entered');
+  assert.strictEqual(sm.savings, 300);
+  assert.strictEqual(sm.budget, 600, 'allowance carries over from an earlier month');
+  assert.strictEqual(s.balance, null, 'no balance until it is set');
+  const allow = (monthAllowances) => w.summarize([{ kind: 'settings', id: 'main', data: { monthlyBudget: 500, monthAllowances } }], NOW).budget;
+  assert.strictEqual(allow({ '2026-10': 600, '2026-11': 800 }), 800);
+  assert.strictEqual(allow({ '2026-12': 900 }), 500, 'later months do not apply');
+  const rich = await load({ replies: [{ body: { records: withMoney, cursor: 1, more: false } }] });
+  assert.match(texts(await rich.buildWidget('small', LINK, NOW)).join(' | '),
+    /^Balance \| 1,164\.500 \| TND \| Today \| -34\.500 \| Month left \| 552\.250 \| Savings \| 300\.000$/);
+
   // Pagination and auth header
   const p = await load({ replies: [{ body: { records: [RECORDS[0]], cursor: 7, more: true } }, { body: { records: [RECORDS[1]], cursor: 9, more: false } }] });
   assert.strictEqual((await p.pull(KEY)).length, 2);
@@ -125,7 +154,7 @@ const RECORDS = [
   const families = ['small', 'medium', 'large', 'accessoryRectangular', 'accessoryInline', 'accessoryCircular'];
   const noBudget = RECORDS.filter((r) => r.kind !== 'settings');
   for (const screen of [{ width: 320, height: 568 }, { width: 440, height: 956 }]) {
-    for (const records of [RECORDS, noBudget]) {
+    for (const records of [RECORDS, noBudget, withMoney]) {
       for (const family of families) {
         const r = await load({ screen, replies: [{ body: { records, cursor: 1, more: false } }] });
         const widget = await r.buildWidget(family, LINK);
@@ -146,6 +175,23 @@ const RECORDS = [
   });
   assert.ok(live.env.widget instanceof ListWidget, 'Script.setWidget was called');
   assert.strictEqual(live.env.widget.url, LINK.appUrl);
+
+  // Loader: runs the code it downloads, keeps the last good copy for offline, never caches an error page
+  const LOADER = fs.readFileSync(path.join(__dirname, 'spendly-loader.js'), 'utf8');
+  const files = fakeFiles();
+  const runLoader = async (replies) => {
+    const env = {
+      config: { runsInWidget: true, widgetFamily: 'small' }, Script: { setWidget: (x) => { env.widget = x; }, complete() {} },
+      Keychain: { contains: () => false }, Request: fakeRequest(replies, []), FileManager: files, Device: { screenSize: () => ({ width: 390, height: 844 }) },
+      Size, Color, Font, ListWidget, Alert: class {},
+    };
+    await new AsyncFunction(...Object.keys(env), LOADER)(...Object.values(env));
+    return texts(env.widget).join(' ');
+  };
+  assert.match(await runLoader([{ body: SRC }]), /run this script/, 'loader runs the downloaded widget');
+  assert.match(await runLoader([{ status: 404, body: '<html>Not found</html>' }]), /run this script/, 'error page falls back to the cached copy');
+  assert.match(await runLoader([new Error('offline')]), /run this script/, 'offline uses the cached copy');
+  await assert.rejects(new AsyncFunction('FileManager', 'Request', LOADER)(fakeFiles(), fakeRequest([new Error('offline')], [])), /offline/);
 
   console.log('widget self-check passed');
 })().catch((e) => { console.error(e); process.exit(1); });
