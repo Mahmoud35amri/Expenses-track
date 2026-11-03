@@ -10,7 +10,9 @@ const REFRESH_MIN = 15;
 const RECENT_ROWS = 5; // 4 when a monthly budget bar takes room in the large widget
 const TIERS = { essential: 'Essential', lifestyle: 'Lifestyle', luxury: 'Luxury' };
 // The server only stores categories that were added or edited, so the built-ins live here.
-// Keep in sync with DEFAULT_CATEGORIES in app.js.
+// Keep in sync with DEFAULT_CATEGORIES and DEFAULT_FIXED in app.js.
+// Monthly bills (rent, subscriptions...) count in the month total but not in "Today".
+const DEFAULT_FIXED = new Set(['rent', 'subs', 'bills']);
 const DEFAULT_CATEGORIES = {
   groceries: ['Groceries', 'essential'], rent: ['Housing', 'essential'], bills: ['Bills', 'essential'],
   transport: ['Transport', 'essential'], fuel: ['Fuel', 'essential'], health: ['Health', 'essential'],
@@ -77,7 +79,7 @@ async function loadRecords(key) {
 
 function summarize(records, now) {
   const cats = {};
-  for (const [id, [name, tier]] of Object.entries(DEFAULT_CATEGORIES)) cats[id] = { name, tier };
+  for (const [id, [name, tier]] of Object.entries(DEFAULT_CATEGORIES)) cats[id] = { name, tier, fixed: DEFAULT_FIXED.has(id) };
   let cur = 'TND';
   let budget = 0;
   const expenses = [];
@@ -85,7 +87,7 @@ function summarize(records, now) {
     const d = r.data || {};
     if (r.kind === 'category') {
       if (r.deleted) delete cats[r.id];
-      else cats[r.id] = { name: String(d.name || 'Category'), tier: TIERS[d.tier] ? d.tier : 'lifestyle' };
+      else cats[r.id] = { name: String(d.name || 'Category'), tier: TIERS[d.tier] ? d.tier : 'lifestyle', fixed: d.fixed === undefined ? DEFAULT_FIXED.has(r.id) : !!d.fixed };
     } else if (r.kind === 'settings' && !r.deleted) {
       cur = d.currency && d.currency !== '$' ? String(d.currency) : 'TND';
       budget = Number(d.monthlyBudget) || 0;
@@ -100,7 +102,7 @@ function summarize(records, now) {
     if (e.ts.getFullYear() !== now.getFullYear() || e.ts.getMonth() !== now.getMonth()) continue;
     s.month += e.amount;
     s.tiers[e.tier] += e.amount;
-    if (e.ts.getDate() === now.getDate()) s.today += e.amount;
+    if (e.ts.getDate() === now.getDate() && !e.fixed) s.today += e.amount;
   }
   s.recent = items.sort((a, b) => b.ts - a.ts).slice(0, RECENT_ROWS);
   return s;

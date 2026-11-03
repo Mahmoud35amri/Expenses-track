@@ -11,6 +11,8 @@
     luxury:    { name: 'Luxury',    hint: 'Extras', color: 'var(--t-luxury)' },
   };
   const TIER_KEYS = Object.keys(TIERS);
+  // Categories paid once a month: counted in monthly totals, left out of daily spending.
+  const DEFAULT_FIXED = new Set(['rent', 'subs', 'bills']);
   const DEFAULT_CATEGORIES = [
     ['groceries', 'cart', 'Groceries', 'essential'],
     ['rent', 'home', 'Housing', 'essential'],
@@ -27,7 +29,7 @@
     ['tech', 'phone', 'Electronics', 'luxury'],
     ['gifts', 'gift', 'Gifts', 'luxury'],
     ['other', 'box', 'Other', 'lifestyle'],
-  ].map(([id, ic, name, tier]) => ({ id, icon: ic, name, tier }));
+  ].map(([id, ic, name, tier]) => ({ id, icon: ic, name, tier, fixed: DEFAULT_FIXED.has(id) }));
   const LEGACY_ICON = Object.fromEntries(DEFAULT_CATEGORIES.map((c) => [c.id, c.icon]));
 
   // ---------- State ----------
@@ -37,14 +39,15 @@
   let monthMode = 'tier';
   let budgetCursor = startOfMonth(new Date());
   const draft = { id: null, amount: '0', catId: null };
-  const newCat = { name: '', icon: 'tag', tier: 'lifestyle' };
+  const newCat = { name: '', icon: 'tag', tier: 'lifestyle', fixed: false };
 
   // Normalizes stored or imported data. Every record carries `updatedAt` (ms) for sync conflict resolution.
   function normalize(s) {
     const categories = (Array.isArray(s.categories) && s.categories.length ? s.categories : DEFAULT_CATEGORIES.map((c) => ({ ...c, updatedAt: 0 })))
       .filter((c) => c && c.id)
       .map((c) => {
-        const out = { id: String(c.id), name: String(c.name || 'Category'), tier: TIERS[c.tier] ? c.tier : 'lifestyle', icon: c.icon || LEGACY_ICON[c.id] || 'tag', updatedAt: Number(c.updatedAt) || 0 };
+        const out = { id: String(c.id), name: String(c.name || 'Category'), tier: TIERS[c.tier] ? c.tier : 'lifestyle', icon: c.icon || LEGACY_ICON[c.id] || 'tag', updatedAt: Number(c.updatedAt) || 0,
+          fixed: c.fixed === undefined ? DEFAULT_FIXED.has(String(c.id)) : !!c.fixed };
         if (!window.ICONS[out.icon]) out.icon = 'tag';
         return out;
       });
@@ -76,7 +79,7 @@
       st.expenses.forEach((e) => { st.sync.dirty['expense:' + e.id] = 1; });
       st.categories.forEach((c) => {
         const d = DEFAULT_CATEGORIES.find((x) => x.id === c.id);
-        if (!d || d.name !== c.name || d.tier !== c.tier || d.icon !== c.icon) { c.updatedAt = now; st.sync.dirty['category:' + c.id] = 1; }
+        if (!d || d.name !== c.name || d.tier !== c.tier || d.icon !== c.icon || d.fixed !== c.fixed) { c.updatedAt = now; st.sync.dirty['category:' + c.id] = 1; }
       });
       if (Array.isArray(s.categories) && s.categories.length) {
         DEFAULT_CATEGORIES.forEach((d) => {
@@ -165,6 +168,25 @@
     list.forEach((e) => { r[catById(e.catId).tier] += Number(e.amount); });
     return r;
   }
+  const isFixed = (e) => !!catById(e.catId).fixed;
+  const dailyOnly = (list) => list.filter((e) => !isFixed(e));
+  // Splits a month into day-to-day spending and monthly bills. For the current or a future month, bills paid
+  // last month that haven't been paid yet this month are estimated as still to come.
+  function monthBills(m) {
+    const list = expensesIn((d) => sameMonth(d, m));
+    const fixedList = list.filter(isFixed);
+    const paid = sum(fixedList);
+    const out = { list, paid, daily: sum(list) - paid, upcoming: 0, upcomingCats: [] };
+    if (m >= startOfMonth(new Date())) {
+      const prev = new Date(m.getFullYear(), m.getMonth() - 1, 1);
+      const prevByCat = {};
+      expensesIn((d) => sameMonth(d, prev)).filter(isFixed).forEach((e) => { prevByCat[e.catId] = (prevByCat[e.catId] || 0) + Number(e.amount); });
+      Object.entries(prevByCat).forEach(([id, v]) => {
+        if (!fixedList.some((e) => e.catId === id)) { out.upcoming += v; out.upcomingCats.push([id, v]); }
+      });
+    }
+    return out;
+  }
   function expensesIn(pred) { return state.expenses.filter((e) => pred(new Date(e.ts))).sort((a, b) => new Date(b.ts) - new Date(a.ts)); }
   function hydrateIcons(root = document) { root.querySelectorAll('[data-icon]').forEach((el) => { el.innerHTML = icon(el.dataset.icon); el.removeAttribute('data-icon'); }); }
 
@@ -209,7 +231,7 @@
     const c = catById(e.catId);
     const d = new Date(e.ts);
     const when = withDate ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' + timeStr(d) : timeStr(d);
-    const meta = [when, e.note ? esc(e.note) : TIERS[c.tier].name].join(' · ');
+    const meta = [when, c.fixed ? 'Monthly' : '', e.note ? esc(e.note) : c.fixed ? '' : TIERS[c.tier].name].filter(Boolean).join(' · ');
     return `<li><button class="item" data-edit="${esc(e.id)}">
       ${catIcon(c)}
       <span class="mid"><div class="name">${esc(c.name)}</div><div class="meta">${meta}</div></span>
@@ -224,7 +246,10 @@
   function renderToday() {
     const now = new Date();
     const today = expensesIn((d) => sameDay(d, now));
-    const month = expensesIn((d) => sameMonth(d, now));
+    const todayDaily = sum(dailyOnly(today));
+    const todayBills = sum(today) - todayDaily;
+    const mb = monthBills(now);
+    const month = mb.list;
     const mTotal = sum(month);
     const budget = allowanceFor(now);
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
@@ -233,15 +258,16 @@
     let stats;
     if (budget) {
       const left = budget - mTotal;
+      const perDayLeft = Math.max(0, left - mb.upcoming) / daysLeft; // keep money aside for bills still to come
       stats = `<div class="stats" style="--cols:3">
         <div><div class="k">This month</div><div class="v num">${statMoney(mTotal)}</div></div>
         <div><div class="k">Budget left</div><div class="v num ${left < 0 ? 'over' : ''}">${statMoney(left)}</div></div>
-        <div><div class="k">Per day</div><div class="v num ${left < 0 ? 'over' : ''}">${left > 0 ? statMoney(left / daysLeft) : statMoney(0)}</div></div>
+        <div><div class="k">Per day</div><div class="v num ${left < 0 ? 'over' : ''}">${statMoney(perDayLeft)}</div></div>
       </div>`;
     } else {
       stats = `<div class="stats">
         <div><div class="k">This month</div><div class="v num">${statMoney(mTotal)}</div></div>
-        <div><div class="k">Daily average</div><div class="v num">${statMoney(mTotal / now.getDate())}</div></div>
+        <div><div class="k">Daily average</div><div class="v num">${statMoney(mb.daily / now.getDate())}</div></div>
       </div>`;
     }
 
@@ -253,7 +279,8 @@
     return `
       <section class="card summary">
         <div class="label">Spent today</div>
-        <div class="big num">${bigMoney(sum(today))}</div>
+        <div class="big num">${bigMoney(todayDaily)}</div>
+        ${todayBills ? `<div class="bills-note">+ ${money(todayBills)} monthly bills today, counted in the month only</div>` : ''}
         ${budget ? `<div class="budget-track"><i class="${mTotal > budget ? 'over' : ''}" style="width:${Math.min(100, (mTotal / budget) * 100)}%"></i></div>` : ''}
         ${stats}
       </section>
@@ -270,7 +297,7 @@
       </section>
 
       ${groups.size ? `<section class="card"><div class="card-title">Last 7 days</div>
-        ${[...groups].map(([k, list]) => `<div class="day-head"><span>${dayLabel(new Date(k))}</span><span class="num">${money(sum(list))}</span></div>
+        ${[...groups].map(([k, list]) => `<div class="day-head"><span>${dayLabel(new Date(k))}</span><span class="num">${money(sum(dailyOnly(list)))}</span></div>
           <ul class="list">${list.map((e) => expenseItem(e)).join('')}</ul>`).join('')}
       </section>` : ''}
     `;
@@ -289,9 +316,11 @@
     const budget = allowanceFor(m);
 
     const perDay = Array.from({ length: days }, () => ({ essential: 0, lifestyle: 0, luxury: 0, t: 0 }));
-    list.forEach((e) => { const d = new Date(e.ts).getDate() - 1; const t = catById(e.catId).tier; perDay[d][t] += Number(e.amount); perDay[d].t += Number(e.amount); });
+    // The daily chart and average leave out monthly bills (rent, subscriptions...).
+    dailyOnly(list).forEach((e) => { const d = new Date(e.ts).getDate() - 1; const t = catById(e.catId).tier; perDay[d][t] += Number(e.amount); perDay[d].t += Number(e.amount); });
     const max = Math.max(1, ...perDay.map((d) => d.t));
-    const avg = total / elapsed;
+    const billsTotal = total - sum(dailyOnly(list));
+    const avg = (total - billsTotal) / elapsed;
     const bars = perDay.map((d, i) => `<div class="bar ${d.t ? 'has' : ''} ${isCurrent && i + 1 === now.getDate() ? 'today' : ''}" style="height:${d.t ? Math.max(4, (d.t / max) * 100) : 2}%" title="${i + 1}: ${money(d.t)}">
         ${d.t ? TIER_KEYS.filter((k) => d[k] > 0).map((k) => `<i style="height:${(d[k] / d.t) * 100}%;background:${tierColor(k)}"></i>`).join('') : ''}
       </div>`).join('');
@@ -335,8 +364,9 @@
       </section>
       <section class="card">
         <div class="card-title">Daily spending<span class="aside num">avg ${money(avg, true)}</span></div>
-        <div class="chart">${total ? `<div class="avg" style="bottom:${(avg / max) * 100}%"></div>` : ''}${bars}</div>
+        <div class="chart">${avg ? `<div class="avg" style="bottom:${(avg / max) * 100}%"></div>` : ''}${bars}</div>
         <div class="chart-x"><span>1</span><span>${Math.ceil(days / 2)}</span><span>${days}</span></div>
+        ${billsTotal ? `<div class="bills-note">Monthly bills of ${money(billsTotal)} are included in the total but not in this chart.</div>` : ''}
       </section>
       <section class="card">
         <div class="card-title">Tiers</div>
@@ -358,6 +388,14 @@
       <div class="mid"><div class="top"><span>${esc(c.name)}<small class="num">${Math.round(pct)}%</small></span><b class="num">${money(v)}</b></div>
       <div class="meter"><i style="width:${pct}%;background:${tierColor(c.tier)}"></i></div></div>
     </div>`;
+  }
+
+  function setFixed(id, on) {
+    const c = state.categories.find((x) => x.id === id);
+    if (!c) return;
+    c.fixed = on;
+    touch('category', c); save(); render();
+    toast(on ? `${c.name} counts as a monthly bill` : `${c.name} counts as daily spending`, 'repeat');
   }
 
   // ---------- Budget ----------
@@ -388,7 +426,8 @@
     const m = budgetCursor;
     const isCurrent = sameMonth(m, now);
     const isPast = m < startOfMonth(now);
-    const list = expensesIn((d) => sameMonth(d, m));
+    const mb = monthBills(m);
+    const list = mb.list;
     const spent = sum(list);
     const allowance = allowanceFor(m);
     const own = (st.monthAllowances || {})[ymKey(m)] !== undefined;
@@ -396,8 +435,10 @@
     const elapsed = isCurrent ? now.getDate() : isPast ? days : 0;
     const daysLeft = isCurrent ? days - now.getDate() + 1 : isPast ? 0 : days;
     const left = allowance - spent;
-    const pace = elapsed ? spent / elapsed : 0;
-    const projected = isCurrent ? pace * days : spent;
+    // Day-to-day pace excludes monthly bills; the forecast adds bills paid plus bills still expected.
+    const pace = elapsed ? mb.daily / elapsed : 0;
+    const projected = isCurrent ? mb.paid + mb.upcoming + pace * days : spent;
+    const perDayLeft = daysLeft ? Math.max(0, left - (isPast ? 0 : mb.upcoming)) / daysLeft : 0;
     const bal = balanceInfo();
     const savings = st.savings;
 
@@ -433,7 +474,7 @@
           <div class="stats" style="--cols:3">
             <div><div class="k">Spent</div><div class="v num">${statMoney(spent)}</div></div>
             <div><div class="k">Allowance</div><div class="v num">${statMoney(allowance)}</div></div>
-            <div><div class="k">${isCurrent ? 'Per day left' : 'Daily average'}</div><div class="v num">${isCurrent ? statMoney(Math.max(0, left) / daysLeft) : statMoney(isPast ? spent / days : 0)}</div></div>
+            <div><div class="k">${isCurrent ? 'Per day left' : 'Daily average'}</div><div class="v num">${isCurrent ? statMoney(perDayLeft) : statMoney(isPast ? mb.daily / days : 0)}</div></div>
           </div>
         </section>`;
     }
@@ -445,7 +486,11 @@
       const diff = projected - allowance;
       tips.push(insight(diff > 0 ? 'alert' : 'check', diff > 0 ? 'warn' : 'ok',
         `At your pace of <b>${money(pace)}</b> a day, you will spend about <b>${money(projected)}</b> this month, ${diff > 0 ? `<b>${money(diff)} over</b>` : `<b>${money(-diff)} under</b>`} your allowance.`));
-      if (left > 0) tips.push(insight('today', '', `To stay on budget, keep spending under <b>${money(left / daysLeft)}</b> a day for the next ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`));
+      if (left > 0) tips.push(insight('today', '', `To stay on budget, keep day-to-day spending under <b>${money(perDayLeft)}</b> a day for the next ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`));
+    }
+    if (mb.paid || mb.upcoming) {
+      const names = mb.upcomingCats.map(([id]) => esc(catById(id).name)).join(', ');
+      tips.push(insight('repeat', '', `Monthly bills: <b>${money(mb.paid)}</b> paid${mb.upcoming ? `, about <b>${money(mb.upcoming)}</b> still expected (${names}, based on last month)` : ''}. Day-to-day spending: <b>${money(mb.daily)}</b>.`));
     }
     if (allowance && isPast) {
       tips.push(insight(left >= 0 ? 'check' : 'alert', left >= 0 ? 'ok' : 'warn',
@@ -517,6 +562,14 @@
         ${tierBlock(byTier(list), st.tierBudgets)}
         <div style="margin-top:14px">${cats.map(([id, v]) => catRow(catById(id), v, spent)).join('') || emptyState('No expenses this month', 'Expenses you add will appear here.')}</div>
       </section>
+
+      <div class="section-label">Monthly bills</div>
+      <div class="group">
+        ${state.categories.filter((c) => c.fixed).map((c) => `<div class="row">${catIcon(c, 'sm')}<span class="grow">${esc(c.name)}<small class="sub-line num">${money(sum(list.filter((e) => e.catId === c.id)), true)} this month</small></span><button class="del" data-unfix="${esc(c.id)}" aria-label="Count ${esc(c.name)} as daily spending" title="Count as daily spending">${icon('close')}</button></div>`).join('') || '<div class="row muted" style="font-size:14px">No monthly bills yet</div>'}
+        <label class="row"><span class="ico sm neutral">${icon('plus')}</span><span class="grow">Add a category</span>
+          <select class="inline" id="addFixed"><option value="">Choose</option>${state.categories.filter((c) => !c.fixed).map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></label>
+      </div>
+      <p class="help">Bills paid once a month, like rent and subscriptions, count in your monthly total but not in daily spending, the daily average or the spending forecast. Bills paid last month but not yet this month are kept aside when working out your per-day amount.</p>
 
       <div class="section-label">Tier limits (optional)</div>
       <div class="group">
@@ -591,6 +644,7 @@
           <button class="btn" id="addCat">${icon('plus')}Add</button>
         </div>
         <div class="tier-pick">${TIER_KEYS.map((t) => `<button data-new-tier="${t}" class="${newCat.tier === t ? 'on' : ''}"><i class="dot" style="background:${tierColor(t)}"></i>${TIERS[t].name}</button>`).join('')}</div>
+        <div class="tier-pick"><button id="newFixed" class="${newCat.fixed ? 'on' : ''}">${icon('repeat')}Paid once a month</button></div>
         <div class="icon-pick">${window.CATEGORY_ICONS.map((n) => `<button data-new-icon="${n}" class="${newCat.icon === n ? 'on' : ''}" aria-label="${n}">${icon(n)}</button>`).join('')}</div>
       </div>
 
@@ -763,7 +817,7 @@
     }
     if (kind === 'category') {
       const c = state.categories.find((x) => x.id === id);
-      return c && { kind, id, updatedAt: c.updatedAt, deleted: false, data: { name: c.name, icon: c.icon, tier: c.tier } };
+      return c && { kind, id, updatedAt: c.updatedAt, deleted: false, data: { name: c.name, icon: c.icon, tier: c.tier, fixed: !!c.fixed } };
     }
     if (kind === 'settings') {
       const st = state.settings;
@@ -788,7 +842,8 @@
     } else if (r.kind === 'category') {
       const i = state.categories.findIndex((x) => x.id === r.id);
       if (r.deleted) { if (i >= 0 && state.categories.length > 1) state.categories.splice(i, 1); return true; }
-      const rec = { id: r.id, name: String(d.name || 'Category'), icon: window.ICONS[d.icon] ? d.icon : 'tag', tier: TIERS[d.tier] ? d.tier : 'lifestyle', updatedAt: r.updatedAt };
+      const rec = { id: r.id, name: String(d.name || 'Category'), icon: window.ICONS[d.icon] ? d.icon : 'tag', tier: TIERS[d.tier] ? d.tier : 'lifestyle', updatedAt: r.updatedAt,
+        fixed: d.fixed === undefined ? DEFAULT_FIXED.has(r.id) : !!d.fixed };
       if (i >= 0) state.categories[i] = rec; else state.categories.push(rec);
     } else if (r.kind === 'settings' && !r.deleted) {
       Object.assign(state.settings, {
@@ -942,6 +997,8 @@
     }
     if (t.dataset.newIcon) { newCat.icon = t.dataset.newIcon; document.querySelectorAll('[data-new-icon]').forEach((b) => b.classList.toggle('on', b === t)); return; }
     if (t.dataset.newTier) { newCat.tier = t.dataset.newTier; document.querySelectorAll('[data-new-tier]').forEach((b) => b.classList.toggle('on', b === t)); return; }
+    if (t.id === 'newFixed') { newCat.fixed = !newCat.fixed; t.classList.toggle('on', newCat.fixed); return; }
+    if (t.dataset.unfix) { setFixed(t.dataset.unfix, false); return; }
     if (t.dataset.catDel) {
       const id = t.dataset.catDel;
       if (state.categories.length <= 1) return toast('Keep at least one category', 'alert');
@@ -954,10 +1011,10 @@
       const name = $('#newName').value.trim();
       if (!name) { $('#newName').focus(); return toast('Enter a category name', 'alert'); }
       if (state.categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) return toast('That category already exists', 'alert');
-      const rec = { id: 'c' + uid(), icon: newCat.icon, name, tier: newCat.tier };
+      const rec = { id: 'c' + uid(), icon: newCat.icon, name, tier: newCat.tier, fixed: newCat.fixed };
       state.categories.push(rec);
       touch('category', rec);
-      newCat.name = ''; newCat.icon = 'tag';
+      newCat.name = ''; newCat.icon = 'tag'; newCat.fixed = false;
       save(); render(); toast(`Added ${name}`); return;
     }
     if (t.id === 'syncBadge') { tab = 'settings'; render(); window.scrollTo(0, 0); return; }
@@ -986,6 +1043,7 @@
     const t = ev.target;
     if (t.id === 'dateInput') { draft.dateTouched = true; updateDateLabel(false); }
     if (t.id === 'setCurrency') { state.settings.currency = t.value.trim().toUpperCase() || 'TND'; touch('settings', state.settings); save(); toast('Currency updated'); }
+    if (t.id === 'addFixed' && t.value) { setFixed(t.value, true); return; }
     if (t.id === 'setBalance') {
       state.settings.balance = numOrNull(t.value);
       state.settings.balanceAt = Date.now();

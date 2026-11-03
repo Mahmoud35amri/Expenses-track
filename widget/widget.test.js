@@ -96,6 +96,16 @@ const RECORDS = [
   assert.strictEqual(s.budget, 500);
   assert.deepStrictEqual(s.recent.map((e) => e.name), ['Chicha', 'Coffee', 'Uncategorized', 'Groceries', 'Travel']);
 
+  // Monthly bills (rent by default, or any category marked fixed) count in the month but not in "Today"
+  const today = NOW.toISOString();
+  const withBills = [...RECORDS,
+    { kind: 'expense', id: 'rent1', updatedAt: 9, data: { amount: 800, catId: 'rent', ts: today } },
+    { kind: 'category', id: 'cGym', updatedAt: 9, data: { name: 'Gym', tier: 'lifestyle', icon: 'dumbbell', fixed: true } },
+    { kind: 'expense', id: 'gym1', updatedAt: 9, data: { amount: 60, catId: 'cGym', ts: today } }];
+  const sb = w.summarize(withBills, NOW);
+  assert.strictEqual(sb.today, s.today, 'bills are not daily spending');
+  assert.strictEqual(sb.month, s.month + 860, 'bills count in the month');
+
   // Pagination and auth header
   const p = await load({ replies: [{ body: { records: [RECORDS[0]], cursor: 7, more: true } }, { body: { records: [RECORDS[1]], cursor: 9, more: false } }] });
   assert.strictEqual((await p.pull(KEY)).length, 2);

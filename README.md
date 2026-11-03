@@ -49,6 +49,8 @@ The widget refreshes about every 15 minutes (iOS picks the exact time). Tapping 
 - **Month analysis:** left to spend, spending per day to stay on budget, a projected month total from your pace (after the first 5 days), your expected balance at month end, the biggest category, comparison with the previous month, and warnings for tier limits.
 - **Spending by category and tier** for any month, plus a **History** of the last 6 months showing how much you saved or overspent against each allowance.
 
+**Monthly bills:** categories paid once a month (Housing, Subscriptions and Bills by default; change them under *Budget → Monthly bills*, or tick *Paid once a month* when creating a category) count in monthly totals, tiers and categories. They are left out of "Spent today", the daily average, the daily chart and the spending forecast. Bills paid last month but not yet this month are kept aside when working out how much you can spend per day.
+
 Budget amounts sync between devices with the rest of your settings.
 
 ## Offline-first cloud sync
