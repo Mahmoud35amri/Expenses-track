@@ -1,5 +1,5 @@
 // Offline cache: serve instantly from cache, refresh in the background.
-const CACHE = 'spendly-v4';
+const CACHE = 'spendly-v5';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'icons.js', 'icons/icon.svg', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {

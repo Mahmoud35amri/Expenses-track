@@ -372,12 +372,13 @@
           <li>Double-tap the back of your iPhone. The amount pad opens, ready to type.</li>
         </ol>
       </div>
-      <p class="help">Back Tap opens links in Safari. Use Spendly in Safari so all your expenses stay together. When adding it to the Home Screen, turn off <b>Open as Web App</b> so the icon opens in Safari too.</p>
+      <p class="help">Back Tap opens links in Safari. A Home Screen icon with <b>Open as Web App</b> on keeps its own storage, separate from Safari. To see the same expenses in both, open Spendly in Safari, tap <b>Copy link for another device</b>, then in the Home Screen app tap <b>Paste a device link</b>.</p>
 
       <div class="section-label">Cloud sync</div>
       <div class="group">
         <div class="row" id="syncRow"><span class="sync-ico"></span><span class="grow"></span><button class="btn" id="syncNowBtn">${icon('refresh')}Sync</button></div>
         <button class="row link" id="linkBtn">${icon('link')}<span class="grow">Copy link for another device</span></button>
+        <button class="row link" id="pasteLinkBtn">${icon('copy')}<span class="grow">Paste a device link</span></button>
       </div>
       <p class="help">Everything is saved on this phone first, so the app works without internet. When you are online, changes upload to your private cloud database automatically. Anyone with the device link can see your expenses, so only open it on your own devices.</p>
 
@@ -764,6 +765,12 @@
       (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Device link copied', 'link'), () => prompt('Open this link on your other device:', url));
       return;
     }
+    if (t.id === 'pasteLinkBtn') {
+      // A Home Screen web app has no address bar, so the link from the other copy is pasted here instead of opened.
+      const v = prompt('Paste the device link from your other copy of Spendly:');
+      if (v) linkDevice((v.match(/#link=([A-Za-z0-9_-]+)/) || [null, v.trim()])[1]);
+      return;
+    }
     if (t.id === 'exportCsv') return exportCsv();
     if (t.id === 'exportJson') return download(`spendly-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({ expenses: state.expenses, categories: state.categories, settings: state.settings }, null, 2), 'application/json');
     if (t.id === 'wipe') {
@@ -819,7 +826,8 @@
   setInterval(() => { if (!document.hidden) syncNow(false); }, 60000);
   window.addEventListener('pageshow', (e) => { if (e.persisted) handleRoute(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) return;
+    // Upload right away when leaving (e.g. after a Back Tap add): iOS may freeze the page before the delayed sync runs.
+    if (document.hidden) { if (pendingCount()) syncNow(false); return; }
     if (!$('#sheet').classList.contains('open') && tab !== 'settings') render();
     scheduleSync(300);
   });
