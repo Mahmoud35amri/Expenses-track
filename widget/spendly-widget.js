@@ -78,27 +78,21 @@ async function loadRecords(key) {
   }
 }
 
-// Budget tab math, same rules as allowanceFor, balanceInfo and savingsInfo in app.js.
-// The month's allowance is its own value, else the latest earlier month's, else the default budget.
+// Same rule as allowanceFor in app.js: the month's own allowance, else the latest earlier month's, else the default budget.
 function allowance(set, now) {
   const map = set.monthAllowances && typeof set.monthAllowances === 'object' ? set.monthAllowances : {};
   const k = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const own = Object.keys(map).filter((x) => /^\d{4}-\d{2}$/.test(x) && x <= k).sort().pop();
   return Number(own ? map[own] : set.monthlyBudget) || 0;
 }
-// Balance = entered + added since - moved to savings since - spent since; savings = entered + added since.
-function accounts(set, expenses, entries, now) {
-  const num = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
-  const total = (list, after) => list.filter((x) => x.ts.getTime() > after && x.ts <= now).reduce((a, x) => a + x.amount, 0);
-  const of = (account, ...types) => entries.filter((x) => x.account === account && types.includes(x.type));
-  const balance = num(set.balance);
-  const savings = num(set.savings);
-  const balAt = Number(set.balanceAt) || 0;
-  const savAt = Number(set.savingsAt) || 0;
-  return {
-    balance: balance === null ? null : balance + total(of('balance', 'add'), balAt) - total(of('savings', 'transfer'), balAt) - total(expenses, balAt),
-    savings: savings === null ? null : savings + total(of('savings', 'add', 'transfer'), savAt),
-  };
+
+// The month bar's state, judged like the app's month analysis: over the allowance, or on pace to go over
+// (bills paid + last month's bills not paid yet + day-to-day spending so far, stretched over the month).
+function pace(s, now) {
+  if (s.month > s.budget) return 'over';
+  if (now.getDate() < 5) return 'ok'; // the app waits 5 days before forecasting
+  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return s.bills + s.upcoming + ((s.month - s.bills) / now.getDate()) * days > s.budget ? 'ahead' : 'ok';
 }
 
 function summarize(records, now) {
@@ -107,7 +101,6 @@ function summarize(records, now) {
   let cur = 'TND';
   let set = {};
   const expenses = [];
-  const entries = [];
   for (const r of records) {
     const d = r.data || {};
     if (r.kind === 'category') {
@@ -119,18 +112,22 @@ function summarize(records, now) {
     } else if (r.kind === 'expense' && !r.deleted) {
       const ts = new Date(d.ts);
       if (!isNaN(ts)) expenses.push({ amount: Number(d.amount) || 0, catId: String(d.catId || ''), ts, note: String(d.note || '') });
-    } else if (r.kind === 'entry' && !r.deleted) {
-      entries.push({ account: d.account, type: d.type, amount: Number(d.amount) || 0, ts: new Date(d.ts) });
     }
   }
   const items = expenses.map((e) => ({ ...e, ...(cats[e.catId] || { name: 'Uncategorized', tier: 'lifestyle' }) }));
-  const s = { cur, budget: allowance(set, now), ...accounts(set, expenses, entries, now), today: 0, month: 0, tiers: { essential: 0, lifestyle: 0, luxury: 0 } };
+  const s = { cur, budget: allowance(set, now), today: 0, month: 0, bills: 0, upcoming: 0, tiers: { essential: 0, lifestyle: 0, luxury: 0 } };
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastBills = {}; // last month's bills by category: expected again this month until paid
+  const paidCats = new Set();
   for (const e of items) {
+    if (e.fixed && e.ts.getFullYear() === prev.getFullYear() && e.ts.getMonth() === prev.getMonth()) lastBills[e.catId] = (lastBills[e.catId] || 0) + e.amount;
     if (e.ts.getFullYear() !== now.getFullYear() || e.ts.getMonth() !== now.getMonth()) continue;
     s.month += e.amount;
     s.tiers[e.tier] += e.amount;
+    if (e.fixed) { s.bills += e.amount; paidCats.add(e.catId); }
     if (e.ts.getDate() === now.getDate() && !e.fixed) s.today += e.amount;
   }
+  for (const [id, v] of Object.entries(lastBills)) if (!paidCats.has(id)) s.upcoming += v;
   s.recent = items.sort((a, b) => b.ts - a.ts).slice(0, RECENT_ROWS);
   return s;
 }
@@ -181,43 +178,33 @@ function contentWidth(family) {
   return Math.floor(Math.min(screen.width, screen.height) * (family === 'small' ? 0.38 : 0.82)) - 28;
 }
 
-// One "label ... value" line; values skip the currency since the big number shows it once.
-function statRow(col, label, value, width, color = C.text) {
-  const row = col.addStack();
-  row.centerAlignContent();
-  row.size = new Size(width, 0);
-  addText(row, label, Font.mediumSystemFont(13), C.text2);
-  row.addSpacer();
-  addText(row, value, Font.semiboldRoundedSystemFont(13), color, 0.6);
-}
-
-// The big number is the Budget tab's balance once it is set, else today's spending.
-function totalsColumn(parent, s, offline, width, flexible) {
+// Amounts below the big number skip the currency, which it already shows.
+function totalsColumn(parent, s, now, offline, width, flexible) {
   const col = parent.addStack();
   col.layoutVertically();
-  const hasBalance = s.balance !== null;
-  const hero = hasBalance ? s.balance : s.today;
-  addText(col, (hasBalance ? 'Balance' : 'Today') + (offline ? ' · offline' : ''), Font.semiboldSystemFont(12), C.text2);
+  addText(col, offline ? 'Today · offline' : 'Today', Font.semiboldSystemFont(12), C.text2);
   col.addSpacer(2);
   const big = col.addStack();
   big.bottomAlignContent();
   big.spacing = 3;
-  addText(big, s.cur.length > 1 ? fmt(hero, s.cur) : money(hero, s.cur), Font.boldRoundedSystemFont(28), hero < 0 ? C.danger : C.text, 0.5);
+  addText(big, s.cur.length > 1 ? fmt(s.today, s.cur) : money(s.today, s.cur), Font.boldRoundedSystemFont(28), C.text, 0.5);
   if (s.cur.length > 1) addText(big, s.cur, Font.semiboldSystemFont(13), C.text2);
   if (flexible) col.addSpacer(); else col.addSpacer(10);
-  if (hasBalance) statRow(col, 'Today', fmt(-s.today, s.cur), width);
-  else statRow(col, 'This month', fmt(s.month, s.cur), width);
-  if (s.budget > 0) {
-    const over = s.month > s.budget;
-    col.addSpacer(4);
-    statRow(col, over ? 'Over by' : 'Month left', fmt(Math.abs(s.budget - s.month), s.cur), width, over ? C.danger : C.text);
-    col.addSpacer(5);
-    bar(col, [[s.month, over ? C.danger : C.good]], s.budget, width, 6);
+  const month = now.toLocaleDateString(undefined, { month: 'long' });
+  if (!(s.budget > 0)) {
+    addText(col, month, Font.semiboldSystemFont(12), C.text2);
+    col.addSpacer(1);
+    addText(col, money(s.month, s.cur), Font.semiboldRoundedSystemFont(17), C.text, 0.6);
+    return;
   }
-  if (s.savings !== null) {
-    col.addSpacer(5);
-    statRow(col, 'Savings', fmt(s.savings, s.cur), width);
-  }
+  const daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate() + 1; // counts today, as in the app
+  addText(col, `${month} · ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left`, Font.semiboldSystemFont(12), C.text2, 0.7);
+  col.addSpacer(5);
+  const state = pace(s, now);
+  bar(col, [[s.month, { over: C.danger, ahead: C.luxury, ok: C.good }[state]]], s.budget, width, 6); // C.luxury is the app's warning amber
+  col.addSpacer(4);
+  const left = state === 'over' ? 'Over by ' + fmt(s.month - s.budget, s.cur, true) : `${fmt(s.budget - s.month, s.cur, true)} left of ${fmt(s.budget, s.cur, true)}`;
+  addText(col, left, Font.mediumSystemFont(13), state === 'over' ? C.danger : C.text, 0.7);
 }
 
 function tiersColumn(parent, s, appUrl, width) {
@@ -326,14 +313,14 @@ async function buildWidget(family, link, now = new Date()) {
   const width = contentWidth(family);
   if (family === 'small') {
     const wrap = w.addStack();
-    totalsColumn(wrap, s, data.offline, width, true);
+    totalsColumn(wrap, s, now, data.offline, width, true);
     wrap.addSpacer();
     return w;
   }
   const gap = 16;
   const left = Math.floor((width - gap) * 0.44);
   const top = w.addStack();
-  totalsColumn(top, s, data.offline, left, family === 'medium');
+  totalsColumn(top, s, now, data.offline, left, family === 'medium');
   top.addSpacer(gap);
   tiersColumn(top, s, link.appUrl, width - gap - left);
   if (family !== 'medium') { recentList(w, s, width); w.addSpacer(); }

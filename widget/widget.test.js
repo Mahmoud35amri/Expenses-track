@@ -59,7 +59,7 @@ async function load({ replies = [], config = {}, screen = { width: 390, height: 
     Size, Color, Font, ListWidget, Alert: class {},
   };
   const names = Object.keys(env).filter((k) => k !== 'widget');
-  const run = new AsyncFunction(...names, SRC + '\nreturn { parseLink, pull, loadRecords, summarize, money, buildWidget };');
+  const run = new AsyncFunction(...names, SRC + '\nreturn { parseLink, pull, loadRecords, summarize, pace, money, buildWidget };');
   const api = await run(...names.map((k) => env[k]));
   return { ...api, sent, env };
 }
@@ -112,28 +112,26 @@ const RECORDS = [
   assert.strictEqual(sb.today, s.today, 'bills are not daily spending');
   assert.strictEqual(sb.month, s.month + 860, 'bills count in the month');
 
-  // Budget tab: balance, savings and the month's allowance follow the app's rules
-  const after = new Date(2026, 10, 2).getTime();
-  const entry = (id, account, type, amount, ts, deleted = false) => ({ kind: 'entry', id, deleted, data: { account, type, amount, ts } });
-  const withMoney = [...RECORDS.filter((r) => r.kind !== 'settings'),
-    { kind: 'settings', id: 'main', data: { currency: 'TND', monthlyBudget: 500, monthAllowances: { '2026-10': 600 }, balance: 1000, balanceAt: after, savings: 200, savingsAt: after } },
-    entry('x1', 'balance', 'add', 300, at(2, 12)),
-    entry('x2', 'balance', 'add', 50, at(1, 12)), // before the balance was entered
-    entry('x3', 'savings', 'transfer', 100, at(3, 10)),
-    entry('x4', 'savings', 'set', 999, at(3, 11)),
-    entry('x5', 'savings', 'add', 25, at(4, 12)), // in the future
-    entry('x6', 'balance', 'add', 7, at(3, 12), true)];
-  const sm = w.summarize(withMoney, NOW);
-  assert.strictEqual(sm.balance, 1000 + 300 - 100 - 35.5, 'balance: added, moved to savings, spent since it was entered');
-  assert.strictEqual(sm.savings, 300);
-  assert.strictEqual(sm.budget, 600, 'allowance carries over from an earlier month');
-  assert.strictEqual(s.balance, null, 'no balance until it is set');
+  // Month allowance follows the app: its own value, else carried over from an earlier month, else the default
   const allow = (monthAllowances) => w.summarize([{ kind: 'settings', id: 'main', data: { monthlyBudget: 500, monthAllowances } }], NOW).budget;
+  assert.strictEqual(allow({ '2026-10': 600 }), 600, 'carries over from an earlier month');
   assert.strictEqual(allow({ '2026-10': 600, '2026-11': 800 }), 800);
   assert.strictEqual(allow({ '2026-12': 900 }), 500, 'later months do not apply');
-  const rich = await load({ replies: [{ body: { records: withMoney, cursor: 1, more: false } }] });
-  assert.match(texts(await rich.buildWidget('small', LINK, NOW)).join(' | '),
-    /^Balance \| 1,164\.500 \| TND \| Today \| -34\.500 \| Month left \| 552\.250 \| Savings \| 300\.000$/);
+
+  // Month bar: on track, on pace to go over (bills still expected count), or over
+  const day10 = new Date(2026, 10, 10, 12);
+  const paceAt = (budget, now, extra = []) => {
+    const recs = [...RECORDS.filter((x) => x.kind !== 'settings'), { kind: 'settings', id: 'main', data: { monthlyBudget: budget } }, ...extra];
+    return w.pace(w.summarize(recs, now), now);
+  };
+  const lastRent = [{ kind: 'expense', id: 'r0', data: { amount: 400, catId: 'rent', ts: new Date(2026, 9, 1).toISOString() } }];
+  assert.strictEqual(paceAt(500, day10), 'ok', '47.75 in 10 days is about 143 for the month');
+  assert.strictEqual(paceAt(100, day10), 'ahead');
+  assert.strictEqual(paceAt(500, day10, lastRent), 'ahead', "last month's rent is still expected");
+  assert.strictEqual(paceAt(100, NOW), 'ok', 'too early in the month to judge');
+  assert.strictEqual(paceAt(40, NOW), 'over');
+  const small = await load({ replies: [{ body: { records: RECORDS, cursor: 1, more: false } }] });
+  assert.match(texts(await small.buildWidget('small', LINK, NOW)).join(' | '), /^Today \| 34\.500 \| TND \| \S+ · 28 days left \| 452\.250 left of 500$/);
 
   // Pagination and auth header
   const p = await load({ replies: [{ body: { records: [RECORDS[0]], cursor: 7, more: true } }, { body: { records: [RECORDS[1]], cursor: 9, more: false } }] });
@@ -154,7 +152,7 @@ const RECORDS = [
   const families = ['small', 'medium', 'large', 'accessoryRectangular', 'accessoryInline', 'accessoryCircular'];
   const noBudget = RECORDS.filter((r) => r.kind !== 'settings');
   for (const screen of [{ width: 320, height: 568 }, { width: 440, height: 956 }]) {
-    for (const records of [RECORDS, noBudget, withMoney]) {
+    for (const records of [RECORDS, noBudget]) {
       for (const family of families) {
         const r = await load({ screen, replies: [{ body: { records, cursor: 1, more: false } }] });
         const widget = await r.buildWidget(family, LINK);

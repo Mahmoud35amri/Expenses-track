@@ -30,7 +30,7 @@ iOS doesn't allow widgets for web apps, so Spendly's widget runs in the free **S
 
 | Size | Shows |
 |---|---|
-| Small | Your balance from the Budget tab, today's spending, what's left of this month's allowance, and savings. Until you set a balance, today's total is the big number. |
+| Small | Today's total, days left in the month, and what's left of this month's allowance. The bar turns amber when you're on pace to go over and red once you are over. |
 | Medium | The same, plus this month split by tier and an **+ Add** button |
 | Large | The same, plus your latest 5 expenses (4 when a monthly budget is set) |
 | Lock Screen | Today's and this month's totals |
