@@ -287,3 +287,21 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
   .save-btn { height: 50px; }
   .sheet-panel { gap: 10px; }
 }
+
+/* Budget */
+.sub-line { display: block; font-size: 12px; color: var(--text-3); margin-top: 1px; font-weight: 400; }
+.ico.neutral { background: var(--fill); color: var(--text-2); }
+.summary .big.over { color: var(--danger); }
+.insights { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.insight { display: flex; gap: 10px; font-size: 15px; line-height: 1.45; color: var(--text-2); }
+.insight b { color: var(--text); font-weight: 600; }
+.insight .ii { flex: none; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--fill); color: var(--text-2); margin-top: -2px; }
+.insight .ii svg.i { width: 16px; height: 16px; }
+.insight.ok .ii { color: var(--good); }
+.insight.warn .ii { color: var(--danger); }
+.row.hist { width: 100%; text-align: left; }
+.row.hist .chev { width: 16px; height: 16px; color: var(--text-3); }
+.chip { font-size: 12px; font-weight: 600; padding: 4px 9px; border-radius: 99px; background: var(--fill); color: var(--text-2); white-space: nowrap; }
+.chip.ok { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
+.chip.over { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.tabbar button { max-width: 110px; }

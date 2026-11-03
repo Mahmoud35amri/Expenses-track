@@ -42,6 +42,15 @@ iOS doesn't allow widgets for web apps, so Spendly's widget runs in the free **S
 
 The widget refreshes about every 15 minutes (iOS picks the exact time). Tapping it opens Spendly in Safari. When the phone is offline, it shows the last data it downloaded and says "offline". To check the widget code: `node widget/widget.test.js`.
 
+## Budget tab
+
+- **Current balance and savings:** enter them once. The balance goes down automatically as you add expenses (only expenses dated after you entered it count), so the app always shows an estimated balance. **Overall** is balance plus savings.
+- **Monthly allowance:** how much you can spend each month. A month without its own allowance uses the previous month's.
+- **Month analysis:** left to spend, spending per day to stay on budget, a projected month total from your pace (after the first 5 days), your expected balance at month end, the biggest category, comparison with the previous month, and warnings for tier limits.
+- **Spending by category and tier** for any month, plus a **History** of the last 6 months showing how much you saved or overspent against each allowance.
+
+Budget amounts sync between devices with the rest of your settings.
+
 ## Offline-first cloud sync
 
 Every change is saved on the phone first, so the app works with no internet. Changes go into a queue (the cloud badge in the header shows how many are waiting). When the phone is back online, the queue uploads to a private **Cloudflare D1** database and changes made on other devices download.

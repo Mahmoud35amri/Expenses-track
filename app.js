@@ -35,6 +35,7 @@
   let tab = 'today';
   let monthCursor = startOfMonth(new Date());
   let monthMode = 'tier';
+  let budgetCursor = startOfMonth(new Date());
   const draft = { id: null, amount: '0', catId: null };
   const newCat = { name: '', icon: 'tag', tier: 'lifestyle' };
 
@@ -51,6 +52,10 @@
     if (!settings.currency || settings.currency === '$') settings.currency = 'TND';
     settings.tierBudgets = Object.assign({ essential: 0, lifestyle: 0, luxury: 0 }, settings.tierBudgets || {});
     settings.updatedAt = Number(settings.updatedAt) || 0;
+    settings.monthAllowances = normAllowances(settings.monthAllowances);
+    settings.balance = numOrNull(settings.balance);
+    settings.balanceAt = Number(settings.balanceAt) || 0;
+    settings.savings = numOrNull(settings.savings);
     const expenses = (Array.isArray(s.expenses) ? s.expenses : []).filter((e) => e && e.id).map((e) => ({
       id: String(e.id), amount: Number(e.amount) || 0, catId: e.catId, ts: e.ts, note: e.note || '',
       updatedAt: Number(e.updatedAt) || Date.parse(e.ts) || 1,
@@ -79,9 +84,15 @@
         });
       }
       const set = st.settings;
-      if (set.monthlyBudget || Object.values(set.tierBudgets).some(Number) || set.currency !== 'TND') { set.updatedAt = now; st.sync.dirty['settings:main'] = 1; }
+      if (set.monthlyBudget || Object.values(set.tierBudgets).some(Number) || set.currency !== 'TND' || set.balance !== null || set.savings !== null) { set.updatedAt = now; st.sync.dirty['settings:main'] = 1; }
     }
     return st;
+  }
+  function numOrNull(v) { return v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v); }
+  function normAllowances(m) {
+    const out = {};
+    if (m && typeof m === 'object') Object.keys(m).forEach((k) => { if (/^\d{4}-\d{2}$/.test(k) && Number(m[k]) >= 0) out[k] = Number(m[k]); });
+    return out;
   }
   function genKey() {
     const b = new Uint8Array(24);
@@ -163,9 +174,15 @@
     const view = $('#view');
     if (tab === 'today') { setTitle('Today', new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })); view.innerHTML = renderToday(); }
     if (tab === 'month') { setTitle('Overview', ''); view.innerHTML = renderMonth(); }
+    if (tab === 'budget') { setTitle('Budget', ''); view.innerHTML = renderBudget(); }
     if (tab === 'settings') { setTitle('Settings', ''); view.innerHTML = renderSettings(); }
-    $('#fab').style.display = tab === 'settings' ? 'none' : '';
+    $('#fab').style.display = tab === 'settings' || tab === 'budget' ? 'none' : '';
     updateSyncUI();
+  }
+  // Don't redraw underneath the user while the add sheet is open or they are typing in a field.
+  function canRerender() {
+    const a = document.activeElement;
+    return !$('#sheet').classList.contains('open') && tab !== 'settings' && !(a && a.matches('#view input, #view select'));
   }
   function setTitle(t, s) { $('#viewTitle').textContent = t; $('#viewSub').textContent = s; }
 
@@ -209,7 +226,7 @@
     const today = expensesIn((d) => sameDay(d, now));
     const month = expensesIn((d) => sameMonth(d, now));
     const mTotal = sum(month);
-    const budget = Number(state.settings.monthlyBudget) || 0;
+    const budget = allowanceFor(now);
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const daysLeft = daysInMonth - now.getDate() + 1;
 
@@ -269,7 +286,7 @@
     const days = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate();
     const isCurrent = sameMonth(m, now);
     const elapsed = isCurrent ? now.getDate() : days;
-    const budget = Number(state.settings.monthlyBudget) || 0;
+    const budget = allowanceFor(m);
 
     const perDay = Array.from({ length: days }, () => ({ essential: 0, lifestyle: 0, luxury: 0, t: 0 }));
     list.forEach((e) => { const d = new Date(e.ts).getDate() - 1; const t = catById(e.catId).tier; perDay[d][t] += Number(e.amount); perDay[d].t += Number(e.amount); });
@@ -343,6 +360,184 @@
     </div>`;
   }
 
+  // ---------- Budget ----------
+  const ymKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const daysIn = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  // A month's allowance: its own value, else the most recent earlier month's, else the default (current/future months only).
+  function allowanceFor(d) {
+    const map = state.settings.monthAllowances || {};
+    const k = ymKey(d);
+    if (map[k] !== undefined) return Number(map[k]) || 0;
+    const earlier = Object.keys(map).filter((x) => x < k).sort().pop();
+    if (earlier) return Number(map[earlier]) || 0;
+    return k >= ymKey(new Date()) ? Number(state.settings.monthlyBudget) || 0 : 0;
+  }
+  // Balance entered by the user, minus expenses dated after it was entered.
+  function balanceInfo() {
+    const st = state.settings;
+    if (st.balance === null) return null;
+    const now = Date.now();
+    const spentSince = sum(state.expenses.filter((e) => { const t = new Date(e.ts).getTime(); return t > st.balanceAt && t <= now; }));
+    return { entered: st.balance, at: st.balanceAt, spentSince, now: st.balance - spentSince };
+  }
+  function insight(ic, cls, html) { return `<li class="insight ${cls}"><span class="ii">${icon(ic)}</span><span>${html}</span></li>`; }
+
+  function renderBudget() {
+    const st = state.settings;
+    const now = new Date();
+    const m = budgetCursor;
+    const isCurrent = sameMonth(m, now);
+    const isPast = m < startOfMonth(now);
+    const list = expensesIn((d) => sameMonth(d, m));
+    const spent = sum(list);
+    const allowance = allowanceFor(m);
+    const own = (st.monthAllowances || {})[ymKey(m)] !== undefined;
+    const days = daysIn(m);
+    const elapsed = isCurrent ? now.getDate() : isPast ? days : 0;
+    const daysLeft = isCurrent ? days - now.getDate() + 1 : isPast ? 0 : days;
+    const left = allowance - spent;
+    const pace = elapsed ? spent / elapsed : 0;
+    const projected = isCurrent ? pace * days : spent;
+    const bal = balanceInfo();
+    const savings = st.savings;
+
+    // Overall money
+    const overall = `
+      <section class="card summary">
+        <div class="label">Overall · balance + savings</div>
+        <div class="big num">${bigMoney((bal ? bal.now : 0) + (savings || 0))}</div>
+        <div class="stats">
+          <div><div class="k">Balance now</div><div class="v num ${bal && bal.now < 0 ? 'over' : ''}">${bal ? statMoney(bal.now) : '—'}</div></div>
+          <div><div class="k">Savings</div><div class="v num">${savings !== null ? statMoney(savings) : '—'}</div></div>
+        </div>
+      </section>
+      <div class="group">
+        <label class="row">${'<span class="ico sm neutral">' + icon('wallet') + '</span>'}<span class="grow">Current balance<small class="sub-line">${bal
+          ? `Entered ${new Date(bal.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${money(bal.spentSince)} spent since`
+          : 'Money in your account and cash today'}</small></span>
+          <input id="setBalance" type="number" inputmode="decimal" step="any" value="${bal ? round(bal.now) : ''}" placeholder="Not set" /></label>
+        <label class="row">${'<span class="ico sm neutral">' + icon('vault') + '</span>'}<span class="grow">Savings<small class="sub-line">Money you keep aside</small></span>
+          <input id="setSavings" type="number" inputmode="decimal" step="any" value="${savings !== null ? savings : ''}" placeholder="Not set" /></label>
+      </div>
+      <p class="help">Your balance goes down automatically as you add expenses. Update it any time to match your bank.</p>`;
+
+    // Month allowance + analysis
+    let analysis = '';
+    if (allowance) {
+      const label = isPast ? (left >= 0 ? 'Saved from allowance' : 'Over allowance') : left >= 0 ? 'Left to spend' : 'Over allowance';
+      analysis = `
+        <section class="card summary">
+          <div class="label">${label}</div>
+          <div class="big num ${left < 0 ? 'over' : ''}">${bigMoney(Math.abs(left))}</div>
+          <div class="budget-track"><i class="${spent > allowance ? 'over' : ''}" style="width:${Math.min(100, (spent / allowance) * 100)}%"></i></div>
+          <div class="stats" style="--cols:3">
+            <div><div class="k">Spent</div><div class="v num">${statMoney(spent)}</div></div>
+            <div><div class="k">Allowance</div><div class="v num">${statMoney(allowance)}</div></div>
+            <div><div class="k">${isCurrent ? 'Per day left' : 'Daily average'}</div><div class="v num">${isCurrent ? statMoney(Math.max(0, left) / daysLeft) : statMoney(isPast ? spent / days : 0)}</div></div>
+          </div>
+        </section>`;
+    }
+
+    const tips = [];
+    if (allowance && isCurrent && elapsed < 5) {
+      tips.push(insight('today', '', `It's early in the month: <b>${money(spent)}</b> spent so far, <b>${money(Math.max(0, left))}</b> left. A spending forecast appears after the first 5 days.`));
+    } else if (allowance && isCurrent) {
+      const diff = projected - allowance;
+      tips.push(insight(diff > 0 ? 'alert' : 'check', diff > 0 ? 'warn' : 'ok',
+        `At your pace of <b>${money(pace)}</b> a day, you will spend about <b>${money(projected)}</b> this month, ${diff > 0 ? `<b>${money(diff)} over</b>` : `<b>${money(-diff)} under</b>`} your allowance.`));
+      if (left > 0) tips.push(insight('today', '', `To stay on budget, keep spending under <b>${money(left / daysLeft)}</b> a day for the next ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`));
+    }
+    if (allowance && isPast) {
+      tips.push(insight(left >= 0 ? 'check' : 'alert', left >= 0 ? 'ok' : 'warn',
+        `You spent <b>${money(spent)}</b> of <b>${money(allowance)}</b> (${Math.round((spent / allowance) * 100)}%). ${left >= 0 ? `You kept <b>${money(left)}</b> of your allowance.` : `You went <b>${money(-left)}</b> over.`}`));
+    }
+    if (isCurrent && bal && elapsed < 5 && allowance) {
+      tips.push(insight('wallet', '', `If you spend exactly your allowance, your balance will be about <b>${money(bal.now - Math.max(0, left))}</b> at the end of the month.`));
+    }
+    if (isCurrent && bal && elapsed >= 5) {
+      const endIfPace = bal.now - Math.max(0, projected - spent);
+      const endIfBudget = allowance ? bal.now - Math.max(0, left) : null;
+      tips.push(insight('wallet', endIfPace < 0 ? 'warn' : '',
+        `Expected balance at month end: <b>${money(endIfPace)}</b> at your current pace${endIfBudget !== null ? `, or <b>${money(endIfBudget)}</b> if you spend exactly your allowance` : ''}.`));
+    }
+    const catTotals = {};
+    list.forEach((e) => { catTotals[e.catId] = (catTotals[e.catId] || 0) + Number(e.amount); });
+    const cats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+    if (cats.length) {
+      const [topId, topV] = cats[0];
+      tips.push(insight(catById(topId).icon, '', `Biggest category: <b>${esc(catById(topId).name)}</b> with ${money(topV)} (${Math.round((topV / spent) * 100)}% of spending${allowance ? `, ${Math.round((topV / allowance) * 100)}% of your allowance` : ''}).`));
+    }
+    const prev = new Date(m.getFullYear(), m.getMonth() - 1, 1);
+    const prevSpent = sum(expensesIn((d) => sameMonth(d, prev)));
+    if (prevSpent && spent && !isCurrent) {
+      const ch = ((spent - prevSpent) / prevSpent) * 100;
+      tips.push(insight(ch > 0 ? 'up' : 'down', ch > 0 ? 'warn' : 'ok', `${Math.abs(Math.round(ch))}% ${ch > 0 ? 'more' : 'less'} than ${prev.toLocaleDateString(undefined, { month: 'long' })} (${money(prevSpent)}).`));
+    }
+    TIER_KEYS.forEach((k) => {
+      const lim = Number(st.tierBudgets[k]) || 0;
+      const v = sum(list.filter((e) => catById(e.catId).tier === k));
+      if (lim && v > lim) tips.push(insight('alert', 'warn', `${TIERS[k].name} spending is <b>${money(v - lim)}</b> over its ${money(lim)} limit.`));
+    });
+
+    // History: last 6 months that have an allowance or spending
+    const hist = [];
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const sp = sum(expensesIn((x) => sameMonth(x, d)));
+      const al = allowanceFor(d);
+      if (sp || al) hist.push({ d, sp, al });
+    }
+    const keys = Object.keys(st.monthAllowances || {});
+    let totalSaved = 0;
+    if (keys.length || st.monthlyBudget) {
+      const first = state.expenses.reduce((a, e) => Math.min(a, new Date(e.ts).getTime()), Date.now());
+      for (let d = startOfMonth(new Date(first)); d < startOfMonth(now); d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
+        const al = allowanceFor(d);
+        if (al) totalSaved += al - sum(expensesIn((x) => sameMonth(x, d)));
+      }
+    }
+
+    return `
+      ${overall}
+
+      <div class="month-nav" style="margin-top:22px">
+        <button class="icon-btn" data-bmonth="-1" aria-label="Previous month">${icon('left')}</button>
+        <div class="m">${m.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</div>
+        <button class="icon-btn" data-bmonth="1" aria-label="Next month">${icon('right')}</button>
+      </div>
+      <div class="group" style="margin-bottom:12px">
+        <label class="row"><span class="ico sm neutral">${icon('card')}</span><span class="grow">Allowance<small class="sub-line">${own ? 'Set for this month' : allowance ? 'Same as the previous month' : 'How much you can spend this month'}</small></span>
+          <input id="setAllowance" data-ym="${ymKey(m)}" type="number" inputmode="decimal" min="0" step="any" value="${allowance || ''}" placeholder="Not set" /></label>
+      </div>
+      ${analysis}
+      ${tips.length ? `<section class="card"><div class="card-title">Month analysis</div><ul class="insights">${tips.join('')}</ul></section>` : ''}
+
+      <section class="card">
+        <div class="card-title">Spending by category<span class="aside num">${money(spent)}</span></div>
+        ${tierBlock(byTier(list), st.tierBudgets)}
+        <div style="margin-top:14px">${cats.map(([id, v]) => catRow(catById(id), v, spent)).join('') || emptyState('No expenses this month', 'Expenses you add will appear here.')}</div>
+      </section>
+
+      <div class="section-label">Tier limits (optional)</div>
+      <div class="group">
+        ${TIER_KEYS.map((k) => `<label class="row"><i class="dot" style="background:${tierColor(k)}"></i><span class="grow">${TIERS[k].name}<small class="sub-line">${TIERS[k].hint}</small></span><input data-tier-budget="${k}" type="number" inputmode="decimal" min="0" step="any" value="${st.tierBudgets[k] || ''}" placeholder="No limit" /></label>`).join('')}
+      </div>
+
+      ${hist.length ? `<div class="section-label">History</div>
+      <div class="group">
+        ${hist.map((h) => {
+          const diff = h.al - h.sp;
+          const current = sameMonth(h.d, now);
+          const chip = !h.al ? '<span class="chip">No allowance</span>'
+            : current ? `<span class="chip">${money(Math.max(0, diff), true)} left</span>`
+            : diff >= 0 ? `<span class="chip ok">Saved ${money(diff, true)}</span>` : `<span class="chip over">Over ${money(-diff, true)}</span>`;
+          return `<button class="row hist" data-bm="${ymKey(h.d)}"><span class="grow">${h.d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}<small class="sub-line num">${money(h.sp, true)}${h.al ? ' of ' + money(h.al, true) : ''}</small></span>${chip}${icon('right', 'chev')}</button>`;
+        }).join('')}
+      </div>
+      ${totalSaved ? `<p class="help">Across past months you ${totalSaved >= 0 ? 'kept' : 'overspent'} <b>${money(Math.abs(totalSaved))}</b> ${totalSaved >= 0 ? 'of your allowances' : 'beyond your allowances'}.</p>` : ''}` : ''}
+    `;
+  }
+
   function renderSettings() {
     const s = state.settings;
     const quickUrl = location.origin + location.pathname.replace(/index\.html$/, '') + '#add';
@@ -382,12 +577,6 @@
       </div>
       <p class="help">Everything is saved on this phone first, so the app works without internet. When you are online, changes upload to your private cloud database automatically. Anyone with the device link can see your expenses, so only open it on your own devices.</p>
 
-      <div class="section-label">Budgets</div>
-      <div class="group">
-        <label class="row"><span class="grow">Monthly budget</span><input id="setBudget" type="number" inputmode="decimal" min="0" step="any" value="${s.monthlyBudget || ''}" placeholder="Not set" /></label>
-        ${TIER_KEYS.map((k) => `<label class="row"><i class="dot" style="background:${tierColor(k)}"></i><span class="grow">${TIERS[k].name}</span><input data-tier-budget="${k}" type="number" inputmode="decimal" min="0" step="any" value="${s.tierBudgets[k] || ''}" placeholder="Not set" /></label>`).join('')}
-      </div>
-
       <div class="section-label">Preferences</div>
       <div class="group">
         <label class="row"><span class="grow">Currency</span><input id="setCurrency" type="text" value="${esc(s.currency)}" maxlength="4" autocomplete="off" /></label>
@@ -425,6 +614,8 @@
     $('#noteInput').value = expense ? (expense.note || '') : '';
     $('#dateInput').value = toLocalInput(expense ? new Date(expense.ts) : new Date());
     updateDateLabel(!expense);
+    draft.dateTouched = false;
+    draft.origTs = expense ? expense.ts : null;
     $('#sheetTitle').textContent = expense ? 'Edit expense' : 'New expense';
     $('#deleteBtn').hidden = !expense;
     $('#amountCur').textContent = suffixCur() ? '' : cur();
@@ -485,9 +676,14 @@
     const amount = round(parseFloat(draft.amount));
     if (!(amount > 0)) { shake(); return; }
     if (!draft.catId) { toast('Choose a category', 'alert'); return; }
-    const dateVal = $('#dateInput').value;
-    const d = dateVal ? new Date(dateVal) : new Date();
-    const ts = (isNaN(d) ? new Date() : d).toISOString();
+    // The date field has minute precision: only use it when the user changed it, so "Now" means the exact time.
+    let ts;
+    if (draft.dateTouched) {
+      const d = new Date($('#dateInput').value);
+      ts = (isNaN(d) ? new Date() : d).toISOString();
+    } else {
+      ts = draft.origTs || new Date().toISOString();
+    }
     const note = $('#noteInput').value.trim();
     const editing = !!draft.id;
     if (editing) {
@@ -571,7 +767,10 @@
     }
     if (kind === 'settings') {
       const st = state.settings;
-      return { kind, id: 'main', updatedAt: st.updatedAt || 0, deleted: false, data: { currency: st.currency, monthlyBudget: st.monthlyBudget, tierBudgets: st.tierBudgets } };
+      return { kind, id: 'main', updatedAt: st.updatedAt || 0, deleted: false, data: {
+        currency: st.currency, monthlyBudget: st.monthlyBudget, tierBudgets: st.tierBudgets,
+        monthAllowances: st.monthAllowances, balance: st.balance, balanceAt: st.balanceAt, savings: st.savings,
+      } };
     }
     return null;
   }
@@ -595,6 +794,7 @@
       Object.assign(state.settings, {
         currency: String(d.currency || 'TND'), monthlyBudget: Number(d.monthlyBudget) || 0,
         tierBudgets: Object.assign({ essential: 0, lifestyle: 0, luxury: 0 }, d.tierBudgets || {}), updatedAt: r.updatedAt,
+        monthAllowances: normAllowances(d.monthAllowances), balance: numOrNull(d.balance), balanceAt: Number(d.balanceAt) || 0, savings: numOrNull(d.savings),
       });
     }
     return true;
@@ -638,7 +838,7 @@
       if (manual) toast(e.code === 'nosetup' ? 'Sync server is not set up yet' : 'Could not reach the sync server', 'cloudOff');
     } finally {
       sync.running = false;
-      if (changed && !$('#sheet').classList.contains('open') && tab !== 'settings') render();
+      if (changed && canRerender()) render();
       else updateSyncUI();
       if (sync.again) { sync.again = false; scheduleSync(300); }
     }
@@ -729,6 +929,8 @@
     if (t.dataset.edit) { const e = state.expenses.find((x) => x.id === t.dataset.edit); if (e) openSheet(e); return; }
     if (t.dataset.month) { monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + Number(t.dataset.month), 1); render(); return; }
     if (t.dataset.mode) { monthMode = t.dataset.mode; render(); return; }
+    if (t.dataset.bmonth) { budgetCursor = new Date(budgetCursor.getFullYear(), budgetCursor.getMonth() + Number(t.dataset.bmonth), 1); render(); return; }
+    if (t.dataset.bm) { const [y, mo] = t.dataset.bm.split('-').map(Number); budgetCursor = new Date(y, mo - 1, 1); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
     if (t.dataset.cat) { draft.catId = t.dataset.cat; haptic(); document.querySelectorAll('.cat-chip').forEach((c) => c.classList.toggle('on', c === t)); updateAmount(); return; }
     if (t.closest('#keypad')) return pressKey(t.dataset.key || t.textContent.trim());
     if (t.id === 'saveBtn') return saveDraft();
@@ -782,10 +984,23 @@
 
   document.addEventListener('change', (ev) => {
     const t = ev.target;
-    if (t.id === 'dateInput') updateDateLabel(false);
+    if (t.id === 'dateInput') { draft.dateTouched = true; updateDateLabel(false); }
     if (t.id === 'setCurrency') { state.settings.currency = t.value.trim().toUpperCase() || 'TND'; touch('settings', state.settings); save(); toast('Currency updated'); }
-    if (t.id === 'setBudget') { state.settings.monthlyBudget = Math.max(0, parseFloat(t.value) || 0); touch('settings', state.settings); save(); toast('Budget updated'); }
-    if (t.dataset.tierBudget) { state.settings.tierBudgets[t.dataset.tierBudget] = Math.max(0, parseFloat(t.value) || 0); touch('settings', state.settings); save(); toast('Budget updated'); }
+    if (t.id === 'setBalance') {
+      state.settings.balance = numOrNull(t.value);
+      state.settings.balanceAt = Date.now();
+      touch('settings', state.settings); save(); render(); toast('Balance updated');
+    }
+    if (t.id === 'setSavings') { state.settings.savings = numOrNull(t.value); touch('settings', state.settings); save(); render(); toast('Savings updated'); }
+    if (t.id === 'setAllowance') {
+      const ym = t.dataset.ym;
+      const v = numOrNull(t.value);
+      if (v === null) delete state.settings.monthAllowances[ym]; else state.settings.monthAllowances[ym] = Math.max(0, v);
+      // The current month's allowance is also the default for months that don't have their own (used by the widget too).
+      if (ym >= ymKey(new Date())) state.settings.monthlyBudget = v === null ? 0 : Math.max(0, v);
+      touch('settings', state.settings); save(); render(); toast('Allowance updated');
+    }
+    if (t.dataset.tierBudget) { state.settings.tierBudgets[t.dataset.tierBudget] = Math.max(0, parseFloat(t.value) || 0); touch('settings', state.settings); save(); if (tab === 'budget') render(); toast('Limit updated'); }
     if (t.dataset.catTier) { const c = state.categories.find((x) => x.id === t.dataset.catTier); if (c) { c.tier = t.value; touch('category', c); save(); render(); toast(`${c.name} moved to ${TIERS[c.tier].name}`); } }
     if (t.id === 'importJson' && t.files[0]) {
       const r = new FileReader();
@@ -828,7 +1043,7 @@
   document.addEventListener('visibilitychange', () => {
     // Upload right away when leaving (e.g. after a Back Tap add): iOS may freeze the page before the delayed sync runs.
     if (document.hidden) { if (pendingCount()) syncNow(false); return; }
-    if (!$('#sheet').classList.contains('open') && tab !== 'settings') render();
+    if (canRerender()) render();
     scheduleSync(300);
   });
 
