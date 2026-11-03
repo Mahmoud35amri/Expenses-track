@@ -8,9 +8,11 @@ A modern, installable web app (PWA) for iPhone that tracks your **daily** and **
 | Lifestyle | Wants | Dining, Coffee, Shopping, Entertainment, Subscriptions, Other |
 | Luxury | Extras | Travel, Electronics, Gifts |
 
-You can add, delete, or move categories between tiers in **Settings**, and set monthly budgets for the whole month or for each tier.
+Amounts are in **Tunisian dinars (TND)** with 3 decimals (millimes); you can change the currency in Settings. You can add, delete, or move categories between tiers in **Settings**, and set monthly budgets for the whole month or for each tier.
 
 There is no server and no account. Your data stays on your phone, and the app works offline. You can export a CSV or a JSON backup from Settings.
+
+**Live app:** https://mahmoud35amri.github.io/Expenses-track/
 
 ## Double-tap the back of your iPhone to add an expense
 
@@ -20,7 +22,7 @@ There is no server and no account. Your data stays on your phone, and the app wo
 
 > iOS opens shortcut URLs in **Safari**, and Safari keeps its data separately from Home Screen web apps. To keep all your expenses in one place, use Spendly in Safari. When you add it to the Home Screen, turn **Open as Web App** off (iOS 26 and later) so the icon also opens in Safari.
 
-**Save without opening the form:** `https://<your-site>/#add?amount=4.5&cat=coffee&note=latte` saves the expense instantly. Inside a shortcut, you can use *Ask for Input* and *Choose from Menu* to fill in these values.
+**Save without opening the form:** `https://<your-site>/#add?amount=4.500&cat=coffee&note=latte` saves the expense instantly. Inside a shortcut, you can use *Ask for Input* and *Choose from Menu* to fill in these values.
 
 ## Deploy on Cloudflare Pages
 

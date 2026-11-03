@@ -78,7 +78,7 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 .stats > div { padding: 12px 18px 14px; }
 .stats > div + div { border-left: 1px solid var(--line); }
 .stats .k { font-size: 12px; color: var(--text-2); }
-.stats .v { font-size: 17px; font-weight: 600; margin-top: 2px; display: flex; align-items: center; gap: 4px; }
+.stats .v { white-space: nowrap; font-size: 17px; font-weight: 600; margin-top: 2px; display: flex; align-items: center; gap: 4px; }
 .stats .v.over { color: var(--danger); }
 .delta { display: inline-flex; align-items: center; gap: 2px; font-size: 15px; }
 .delta svg.i { width: 15px; height: 15px; stroke-width: 2.2; }
@@ -228,6 +228,8 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 .amount { font-size: 52px; line-height: 1.1; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 .amount .cur { color: var(--text-3); font-weight: 600; font-size: 0.55em; vertical-align: 0.42em; margin-right: 3px; letter-spacing: 0; }
 .amount.zero #amountVal { color: var(--text-3); }
+.cur.suf { margin: 0 0 0 6px; vertical-align: 0.12em; }
+.cur:empty { display: none; }
 .amount.shake { animation: shake 0.3s; }
 @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
 .selected-cat { font-size: 14px; color: var(--text-2); margin-top: 4px; min-height: 20px; display: flex; align-items: center; justify-content: center; gap: 6px; }

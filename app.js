@@ -48,7 +48,8 @@
         if (!window.ICONS[out.icon]) out.icon = 'tag';
         return out;
       });
-    const settings = Object.assign({ currency: '$', monthlyBudget: 0, lastCat: null }, s.settings || {});
+    const settings = Object.assign({ currency: 'TND', monthlyBudget: 0, lastCat: null }, s.settings || {});
+    if (!settings.currency || settings.currency === '$') settings.currency = 'TND';
     settings.tierBudgets = Object.assign({ essential: 0, lifestyle: 0, luxury: 0 }, settings.tierBudgets || {});
     return { expenses: Array.isArray(s.expenses) ? s.expenses : [], categories, settings };
   }
@@ -64,13 +65,26 @@
   function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
   function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
   function sameMonth(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth(); }
+  // Currency: TND (Tunisian dinar) uses 3 decimals (millimes) and is written after the amount.
+  const cur = () => state.settings.currency || 'TND';
+  const decimals = () => (/^(TND|DT|د\.ت)$/i.test(cur()) ? 3 : 2);
+  const suffixCur = () => cur().length > 1;
+  const round = (v) => { const f = 10 ** decimals(); return Math.round(v * f) / f; };
   function fmt(n, compact) {
-    const v = Math.round((Number(n) || 0) * 100) / 100;
+    const v = round(Number(n) || 0);
     const whole = compact && Number.isInteger(v);
-    return v.toLocaleString(undefined, { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 });
+    return v.toLocaleString('en-US', { minimumFractionDigits: whole ? 0 : decimals(), maximumFractionDigits: decimals() });
   }
-  function money(n, compact) { const v = Number(n) || 0; return (v < 0 ? '-' : '') + state.settings.currency + fmt(Math.abs(v), compact); }
-  function bigMoney(n) { return `<span class="cur">${esc(state.settings.currency)}</span>${fmt(n)}`; }
+  function money(n, compact) {
+    const v = Number(n) || 0;
+    const body = fmt(Math.abs(v), compact);
+    return (v < 0 ? '-' : '') + (suffixCur() ? `${body} ${cur()}` : cur() + body);
+  }
+  // Compact figure for the small stat tiles: the unit is already shown on the big total above.
+  function statMoney(n) { if (!suffixCur()) return money(n, true); const v = Number(n) || 0; return (v < 0 ? '-' : '') + fmt(Math.abs(v), true); }
+  function bigMoney(n) {
+    return suffixCur() ? `${fmt(n)}<span class="cur suf">${esc(cur())}</span>` : `<span class="cur">${esc(cur())}</span>${fmt(n)}`;
+  }
   function catById(id) { return state.categories.find((c) => c.id === id) || { id, icon: 'tag', name: 'Uncategorized', tier: 'lifestyle' }; }
   function tierColor(t) { return (TIERS[t] || TIERS.lifestyle).color; }
   function catIcon(c, cls = '') {
@@ -164,14 +178,14 @@
     if (budget) {
       const left = budget - mTotal;
       stats = `<div class="stats" style="--cols:3">
-        <div><div class="k">This month</div><div class="v num">${money(mTotal, true)}</div></div>
-        <div><div class="k">Budget left</div><div class="v num ${left < 0 ? 'over' : ''}">${money(left, true)}</div></div>
-        <div><div class="k">Per day</div><div class="v num ${left < 0 ? 'over' : ''}">${left > 0 ? money(left / daysLeft, true) : money(0, true)}</div></div>
+        <div><div class="k">This month</div><div class="v num">${statMoney(mTotal)}</div></div>
+        <div><div class="k">Budget left</div><div class="v num ${left < 0 ? 'over' : ''}">${statMoney(left)}</div></div>
+        <div><div class="k">Per day</div><div class="v num ${left < 0 ? 'over' : ''}">${left > 0 ? statMoney(left / daysLeft) : statMoney(0)}</div></div>
       </div>`;
     } else {
       stats = `<div class="stats">
-        <div><div class="k">This month</div><div class="v num">${money(mTotal, true)}</div></div>
-        <div><div class="k">Daily average</div><div class="v num">${money(mTotal / now.getDate(), true)}</div></div>
+        <div><div class="k">This month</div><div class="v num">${statMoney(mTotal)}</div></div>
+        <div><div class="k">Daily average</div><div class="v num">${statMoney(mTotal / now.getDate())}</div></div>
       </div>`;
     }
 
@@ -258,8 +272,8 @@
         <div class="big num">${bigMoney(total)}</div>
         ${budget ? `<div class="budget-track"><i class="${total > budget ? 'over' : ''}" style="width:${Math.min(100, (total / budget) * 100)}%"></i></div>` : ''}
         <div class="stats" style="--cols:3">
-          <div><div class="k">${budget ? 'Budget' : 'Expenses'}</div><div class="v num">${budget ? money(budget, true) : list.length}</div></div>
-          <div><div class="k">Daily average</div><div class="v num">${money(avg, true)}</div></div>
+          <div><div class="k">${budget ? 'Budget' : 'Expenses'}</div><div class="v num">${budget ? statMoney(budget) : list.length}</div></div>
+          <div><div class="k">Daily average</div><div class="v num">${statMoney(avg)}</div></div>
           <div><div class="k">vs last month</div><div class="v num">${deltaHtml}</div></div>
         </div>
       </section>
@@ -329,7 +343,7 @@
 
       <div class="section-label">Preferences</div>
       <div class="group">
-        <label class="row"><span class="grow">Currency symbol</span><input id="setCurrency" type="text" value="${esc(s.currency)}" maxlength="4" autocomplete="off" /></label>
+        <label class="row"><span class="grow">Currency</span><input id="setCurrency" type="text" value="${esc(s.currency)}" maxlength="4" autocomplete="off" /></label>
       </div>
 
       ${catRows}
@@ -366,7 +380,8 @@
     updateDateLabel(!expense);
     $('#sheetTitle').textContent = expense ? 'Edit expense' : 'New expense';
     $('#deleteBtn').hidden = !expense;
-    $('#amountCur').textContent = state.settings.currency;
+    $('#amountCur').textContent = suffixCur() ? '' : cur();
+    $('#amountSuf').textContent = suffixCur() ? cur() : '';
     renderCats();
     updateAmount();
     $('#sheet').classList.add('open');
@@ -404,7 +419,7 @@
   }
   function formatDraft(s) {
     const [i, d] = s.split('.');
-    const int = Number(i).toLocaleString(undefined);
+    const int = Number(i).toLocaleString('en-US');
     return d !== undefined ? `${int}.${d}` : int;
   }
   function pressKey(k) {
@@ -413,14 +428,14 @@
     else if (k === '.') { if (!a.includes('.')) a += '.'; }
     else if (/^\d$/.test(k)) {
       const dec = a.split('.')[1];
-      if ((dec && dec.length >= 2) || a.replace('.', '').length >= 9) { shake(); return; }
+      if ((dec && dec.length >= decimals()) || a.replace('.', '').length >= 10) { shake(); return; }
       a = a === '0' ? k : a + k;
     } else return;
     draft.amount = a; haptic(); updateAmount();
   }
   function shake() { const el = $('#amountDisplay'); el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); }
   function saveDraft() {
-    const amount = Math.round(parseFloat(draft.amount) * 100) / 100;
+    const amount = round(parseFloat(draft.amount));
     if (!(amount > 0)) { shake(); return; }
     if (!draft.catId) { toast('Choose a category', 'alert'); return; }
     const dateVal = $('#dateInput').value;
@@ -454,7 +469,7 @@
     const catParam = (params.get('cat') || '').toLowerCase().trim();
     const cat = catParam ? state.categories.find((c) => c.id === catParam || c.name.toLowerCase() === catParam) : null;
     if (amount > 0 && cat) {
-      state.expenses.push({ id: uid(), amount: Math.round(amount * 100) / 100, catId: cat.id, ts: new Date().toISOString(), note: (params.get('note') || '').slice(0, 80) });
+      state.expenses.push({ id: uid(), amount: round(amount), catId: cat.id, ts: new Date().toISOString(), note: (params.get('note') || '').slice(0, 80) });
       state.settings.lastCat = cat.id;
       save(); history.replaceState(null, '', location.pathname); tab = 'today'; render();
       toast(`Saved ${money(amount)} · ${cat.name}`);
@@ -530,7 +545,7 @@
   document.addEventListener('change', (ev) => {
     const t = ev.target;
     if (t.id === 'dateInput') updateDateLabel(false);
-    if (t.id === 'setCurrency') { state.settings.currency = t.value.trim() || '$'; save(); toast('Currency updated'); }
+    if (t.id === 'setCurrency') { state.settings.currency = t.value.trim().toUpperCase() || 'TND'; save(); toast('Currency updated'); }
     if (t.id === 'setBudget') { state.settings.monthlyBudget = Math.max(0, parseFloat(t.value) || 0); save(); toast('Budget updated'); }
     if (t.dataset.tierBudget) { state.settings.tierBudgets[t.dataset.tierBudget] = Math.max(0, parseFloat(t.value) || 0); save(); toast('Budget updated'); }
     if (t.dataset.catTier) { const c = state.categories.find((x) => x.id === t.dataset.catTier); if (c) { c.tier = t.value; save(); render(); toast(`${c.name} moved to ${TIERS[c.tier].name}`); } }
