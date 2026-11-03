@@ -24,6 +24,24 @@ There is no server and no account. Your data stays on your phone, and the app wo
 
 **Save without opening the form:** `https://<your-site>/#add?amount=4.500&cat=coffee&note=latte` saves the expense instantly. Inside a shortcut, you can use *Ask for Input* and *Choose from Menu* to fill in these values.
 
+## iPhone widget
+
+iOS doesn't allow widgets for web apps, so Spendly's widget runs in the free **Scriptable** app. It reads your synced expenses and never changes them.
+
+| Size | Shows |
+|---|---|
+| Small | Today's total, this month's total, and budget left (if you set a monthly budget) |
+| Medium | The same, plus this month split by tier and an **+ Add** button |
+| Large | The same, plus your latest 5 expenses (4 when a monthly budget is set) |
+| Lock Screen | Today's and this month's totals |
+
+1. Install **Scriptable** from the App Store.
+2. On the iPhone, open https://mahmoud35amri.github.io/Expenses-track/widget/spendly-widget.js, then long-press the text, tap **Select All**, and **Copy**. In Scriptable, tap **+**, paste, and name the script **Spendly**.
+3. In Spendly, tap **Settings → Copy link for another device**. In Scriptable, run the **Spendly** script and paste the link. Use **Preview** to see each size.
+4. Long-press the Home Screen, tap **Edit → Add Widget → Scriptable**, choose a size, and add it. Then long-press the widget, tap **Edit Widget**, and set **Script** to **Spendly**.
+
+The widget refreshes about every 15 minutes (iOS picks the exact time). Tapping it opens Spendly in Safari. When the phone is offline, it shows the last data it downloaded and says "offline". To check the widget code: `node widget/widget.test.js`.
+
 ## Offline-first cloud sync
 
 Every change is saved on the phone first, so the app works with no internet. Changes go into a queue (the cloud badge in the header shows how many are waiting). When the phone is back online, the queue uploads to a private **Cloudflare D1** database and changes made on other devices download.
