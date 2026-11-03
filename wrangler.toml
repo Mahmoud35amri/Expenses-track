@@ -1,5 +1,5 @@
 # Cloudflare Pages project: static app + /api functions + D1 database.
-# The database_id placeholder is filled in by the GitHub Action at deploy time.
+# D1 database "spendly-db" (created 2026-11-03).
 name = "spendly-m35a"
 pages_build_output_dir = "./dist"
 compatibility_date = "2025-06-01"
@@ -7,4 +7,4 @@ compatibility_date = "2025-06-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "spendly-db"
-database_id = "__D1_DATABASE_ID__"
+database_id = "ffb26df9-ed09-476e-aa94-07cd4ba014d1"
