@@ -126,7 +126,8 @@
   function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
   function sameMonth(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth(); }
   // Currency: TND (Tunisian dinar) uses 3 decimals (millimes) and is written after the amount.
-  const cur = () => state.settings.currency || 'TND';
+  // It is free text that syncs between devices and ends up in innerHTML, so HTML meta-characters are dropped.
+  const cur = () => (state.settings.currency || 'TND').replace(/[&<>"'`]/g, '') || 'TND';
   const decimals = () => (/^(TND|DT|د\.ت)$/i.test(cur()) ? 3 : 2);
   const suffixCur = () => cur().length > 1;
   const round = (v) => { const f = 10 ** decimals(); return Math.round(v * f) / f; };
@@ -686,7 +687,7 @@
 
       <div class="section-label">Tier limits (optional)</div>
       <div class="group">
-        ${TIER_KEYS.map((k) => `<label class="row"><i class="dot" style="background:${tierColor(k)}"></i><span class="grow">${TIERS[k].name}<small class="sub-line">${TIERS[k].hint}</small></span><input data-tier-budget="${k}" type="number" inputmode="decimal" min="0" step="any" value="${st.tierBudgets[k] || ''}" placeholder="No limit" /></label>`).join('')}
+        ${TIER_KEYS.map((k) => `<label class="row"><i class="dot" style="background:${tierColor(k)}"></i><span class="grow">${TIERS[k].name}<small class="sub-line">${TIERS[k].hint}</small></span><input data-tier-budget="${k}" type="number" inputmode="decimal" min="0" step="any" value="${esc(st.tierBudgets[k] || '')}" placeholder="No limit" /></label>`).join('')}
       </div>
 
       ${hist.length ? `<div class="section-label">History</div>
