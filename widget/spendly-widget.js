@@ -2,7 +2,7 @@
 // Setup: run this script once inside Scriptable and paste the link from Spendly's
 // Settings → "Copy link for another device". The widget only reads your synced expenses.
 
-const API = 'https://spendly-m35a.pages.dev/api/sync';
+const API = 'https://spendly.mahmoudamri.me/api/sync';
 const KEY_RE = /^[A-Za-z0-9_-]{32,128}$/;
 const LINK_STORE = 'spendly.widget.link';
 const CACHE_FILE = 'spendly-widget-cache.json';
