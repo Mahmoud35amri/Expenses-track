@@ -59,11 +59,12 @@ Budget amounts sync between devices with the rest of your settings.
 
 ## Offline-first cloud sync
 
-Every change is saved on the phone first, so the app works with no internet. Changes go into a queue (the cloud badge in the header shows how many are waiting). When the phone is back online, the queue uploads to a private **Cloudflare D1** database and changes made on other devices download.
+Every change is saved on the phone first, so the app works with no internet. Changes go into a queue (the cloud badge in the header shows how many are waiting). When the phone is back online, the queue uploads to the private sync server at **https://spendly.mahmoudamri.me** and changes made on other devices download.
 
 - **Conflicts:** the most recent edit wins. Deletions sync too.
 - **Privacy:** each install gets a random sync key, and the server only stores a SHA-256 hash of it. *Settings → Copy link for another device* links a second phone or computer to the same data.
-- **Server code:** `functions/api/sync.js` (Cloudflare Pages Function), `schema.sql` (D1 tables), `wrangler.toml`.
+- **Server:** since November 2026 the app and the widget sync with [spendly-devops](https://github.com/Mahmoud35amri/spendly-devops) (Node.js on Kubernetes, same API). The first sync of a key copies its data from the previous Cloudflare server, and each device re-uploads its data once when it switches, so nothing is lost.
+- **Previous server (kept as a backup):** `functions/api/sync.js` (Cloudflare Pages Function), `schema.sql` (D1 tables), `wrangler.toml`.
 
 ### Deploying
 
@@ -83,7 +84,7 @@ To deploy automatically on every push to `main` instead:
 3. In GitHub, open this repo's **Settings → Secrets and variables → Actions** and add two secrets: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 4. Open **Actions → Deploy to Cloudflare → Run workflow**, or push to `main`.
 
-The workflow reuses the existing D1 database and Pages project (creating them if missing), applies the schema, deploys the app and API to `https://spendly-m35a.pages.dev`, and checks that `/api/health` responds. The GitHub Pages copy syncs to that same API.
+The workflow reuses the existing D1 database and Pages project (creating them if missing), applies the schema, deploys the app and API to `https://spendly-m35a.pages.dev`, and checks that `/api/health` responds. The GitHub Pages app and the widget no longer sync with it (see *Server* above).
 
 ## Run locally
 

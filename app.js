@@ -898,7 +898,7 @@
   // ---------- Cloud sync (offline-first) ----------
   // Every change is written to this device first and queued in state.sync.dirty. When online, the queue is
   // pushed to the server and newer changes from other devices are pulled. Conflicts: last write wins (updatedAt).
-  const SYNC_API = window.SPENDLY_API || (location.hostname.endsWith('github.io') ? 'https://spendly-m35a.pages.dev/api' : '/api');
+  const SYNC_API = window.SPENDLY_API || (location.hostname.endsWith('.github.io') ? 'https://spendly.mahmoudamri.me/api' : '/api');
   const KEY_RE = /^[A-Za-z0-9_-]{32,128}$/;
   const sync = { running: false, again: false, timer: null, status: navigator.onLine ? 'idle' : 'offline' };
 
@@ -911,6 +911,23 @@
     state.sync.dirty[kind + ':' + id] = 1;
   }
   const pendingCount = () => Object.keys(state.sync.dirty).length;
+  // Queue every local record for upload: when this device joins a vault, or starts using another sync server.
+  function queueAll() {
+    state.expenses.forEach((e) => { state.sync.dirty['expense:' + e.id] = 1; });
+    state.categories.forEach((c) => { if (c.updatedAt) state.sync.dirty['category:' + c.id] = 1; });
+    state.entries.forEach((x) => { state.sync.dirty['entry:' + x.id] = 1; });
+    Object.keys(state.sync.tomb).forEach((k) => { state.sync.dirty[k] = 1; });
+    if (state.settings.updatedAt) state.sync.dirty['settings:main'] = 1;
+  }
+  // Cursors are revision numbers of one server, so a new server means: pull from the start and re-upload
+  // everything once (the server keeps the newest copy of each record, so nothing written elsewhere is lost).
+  function adoptServer() {
+    if (state.sync.api === SYNC_API) return;
+    state.sync.api = SYNC_API;
+    state.sync.cursor = 0;
+    queueAll();
+    save(true);
+  }
   function splitKey(key) { const i = key.indexOf(':'); return [key.slice(0, i), key.slice(i + 1)]; }
 
   function localVersion(kind, id) {
@@ -983,6 +1000,7 @@
   async function syncNow(manual) {
     if (sync.running) { sync.again = true; return; }
     if (!navigator.onLine) { setSyncStatus('offline'); if (manual) toast('Offline. Changes are saved on this phone.', 'cloudOff'); return; }
+    adoptServer();
     sync.running = true;
     setSyncStatus('syncing');
     let changed = false;
@@ -1069,10 +1087,7 @@
     state.sync.key = key;
     state.sync.cursor = 0;
     state.sync.lastSyncAt = null;
-    // Re-upload anything created on this device so it merges into the shared data.
-    state.expenses.forEach((e) => { state.sync.dirty['expense:' + e.id] = 1; });
-    state.categories.forEach((c) => { if (c.updatedAt) state.sync.dirty['category:' + c.id] = 1; });
-    if (state.settings.updatedAt) state.sync.dirty['settings:main'] = 1;
+    queueAll(); // re-upload anything created on this device so it merges into the shared data
     save(true);
     tab = 'today'; render();
     toast('Device linked', 'link');
